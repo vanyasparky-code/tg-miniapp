@@ -1,28 +1,25 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Neuro Video</title>
-</head>
-<body>
-  <h1>🎬 Создай своё видео</h1>
+<script>
+  // Получаем параметр из URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const mode = urlParams.get('startapp');
 
-  <input type="file" id="photo" accept="image/*" />
-  <br><br>
+  let prompt = "";
 
-  <button onclick="sendPhoto()">Создать видео</button>
+  if (mode === "repeat") {
+    prompt = "Повтори стиль видео: cinematic portrait, dramatic lighting, slow motion";
+    alert("Режим повтора активирован 🔁");
+  }
 
-  <script>
-    function sendPhoto() {
-      const file = document.getElementById('photo').files[0];
-      
-      if (!file) {
-        alert('Загрузи фото');
-        return;
-      }
-
-      alert('Фото загружено! 🚀 (скоро тут будет генерация видео)');
+  function sendPhoto() {
+    const file = document.getElementById('photo').files[0];
+    
+    if (!file) {
+      alert('Загрузи фото');
+      return;
     }
-  </script>
-</body>
-</html>
+
+    console.log("PROMPT:", prompt);
+
+    alert("Фото отправлено 🚀\nСкоро будет генерация видео");
+  }
+</script>
