@@ -1,25 +1,79 @@
-<script>
-  // Получаем параметр из URL
-  const urlParams = new URLSearchParams(window.location.search);
-  const mode = urlParams.get('startapp');
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Neuro Video</title>
+</head>
+<body>
+  <h1>🎬 Создай своё видео</h1>
 
-  let prompt = "";
+  <input type="file" id="photo" accept="image/*" />
+  <br><br>
 
-  if (mode === "repeat") {
-    prompt = "Повтори стиль видео: cinematic portrait, dramatic lighting, slow motion";
-    alert("Режим повтора активирован 🔁");
-  }
+  <button onclick="sendPhoto()">Создать видео</button>
 
-  function sendPhoto() {
-    const file = document.getElementById('photo').files[0];
-    
-    if (!file) {
-      alert('Загрузи фото');
-      return;
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    const SUPABASE_URL = "https://wkgvsajgiqziotuenkrj.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrZ3ZzYWpnaXF6aW90dWVua3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4OTQyMjIsImV4cCI6MjA5MzQ3MDIyMn0.MsfW_3sWIcKT934By281v0mHohZTS_W1eyRBE-Jm57w";
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get('startapp');
+
+    let prompt = "";
+
+    if (mode === "repeat") {
+      prompt = "Повтори стиль видео: cinematic portrait, dramatic lighting, slow motion";
+      alert("Режим повтора активирован 🔁");
     }
 
-    console.log("PROMPT:", prompt);
+    async function sendPhoto() {
+      const file = document.getElementById('photo').files[0];
 
-    alert("Фото отправлено 🚀\nСкоро будет генерация видео");
-  }
-</script>
+      if (!file) {
+        alert('Загрузи фото');
+        return;
+      }
+
+      const fileName = Date.now() + "_" + file.name;
+
+      const { data: uploadData, error: uploadError } = await supabase
+        .storage
+        .from('media')
+        .upload(fileName, file);
+
+      if (uploadError) {
+        alert('Ошибка загрузки фото');
+        console.error(uploadError);
+        return;
+      }
+
+      const publicUrl = supabase
+        .storage
+        .from('media')
+        .getPublicUrl(fileName).data.publicUrl;
+
+      const { data, error } = await supabase
+        .from('orders')
+        .insert([
+          {
+            template_slug: 'repeat_001',
+            original_photo_url: publicUrl,
+            status: 'photo_uploaded'
+          }
+        ]);
+
+      if (error) {
+        alert('Ошибка создания заказа');
+        console.error(error);
+        return;
+      }
+
+      alert('Фото отправлено 🚀\nЗаказ создан');
+    }
+  </script>
+</body>
+</html>
