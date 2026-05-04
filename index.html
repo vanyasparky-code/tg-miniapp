@@ -18,15 +18,12 @@
     const SUPABASE_URL = "https://wkgvsajgiqziotuenkrj.supabase.co";
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrZ3ZzYWpnaXF6aW90dWVua3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4OTQyMjIsImV4cCI6MjA5MzQ3MDIyMn0.MsfW_3sWIcKT934By281v0mHohZTS_W1eyRBE-Jm57w";
 
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get('startapp');
 
-    let prompt = "";
-
     if (mode === "repeat") {
-      prompt = "Повтори стиль видео: cinematic portrait, dramatic lighting, slow motion";
       alert("Режим повтора активирован 🔁");
     }
 
@@ -40,7 +37,7 @@
 
       const fileName = Date.now() + "_" + file.name;
 
-      const { data: uploadData, error: uploadError } = await supabase
+      const { error: uploadError } = await supabaseClient
         .storage
         .from('media')
         .upload(fileName, file);
@@ -51,12 +48,12 @@
         return;
       }
 
-      const publicUrl = supabase
+      const publicUrl = supabaseClient
         .storage
         .from('media')
         .getPublicUrl(fileName).data.publicUrl;
 
-      const { data, error } = await supabase
+      const { error } = await supabaseClient
         .from('orders')
         .insert([
           {
