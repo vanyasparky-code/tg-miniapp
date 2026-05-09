@@ -11,7 +11,7 @@ async function checkOrders() {
   const { data: orders, error } = await supabase
     .from('orders')
     .select('*')
-    .eq('status', 'pending');
+  .eq('status', 'photo_uploaded');
 
   if (error) {
     console.log(error);
@@ -34,7 +34,7 @@ async function checkOrders() {
       .from('orders')
       .update({
         status: 'done',
-        result_video_url: fakeVideoUrl
+        video_url: fakeVideoUrl
       })
       .eq('id', order.id);
 
