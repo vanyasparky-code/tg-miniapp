@@ -17,12 +17,13 @@ function runHiggsfield(args) {
   return new Promise((resolve, reject) => {
     execFile(
       "npm",
-      ["exec", "--", "higgsfield", ...args],
+      ["exec", "-y", "--package=@higgsfield/cli", "--", "higgsfield", ...args],
       {
-        env: {
-          ...process.env,
-          HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN
-        },
+env: {
+  ...process.env,
+  HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN,
+  HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache"
+},
         maxBuffer: 1024 * 1024 * 20
       },
       (error, stdout, stderr) => {
