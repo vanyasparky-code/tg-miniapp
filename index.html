@@ -3,14 +3,182 @@
 <head>
   <meta charset="UTF-8">
   <title>Neuro Video</title>
+  <style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(114, 92, 255, 0.22), transparent 34%),
+      linear-gradient(180deg, #111827 0%, #0b1020 100%);
+    color: #ffffff;
+  }
+
+  .app {
+    width: 100%;
+    min-height: 100vh;
+    padding: 28px 18px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .hero {
+    padding-top: 18px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 11px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 36px;
+    line-height: 1.02;
+    letter-spacing: -0.05em;
+    font-weight: 800;
+  }
+
+  .subtitle {
+    margin: 14px 0 0;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 16px;
+    line-height: 1.45;
+  }
+
+  .card {
+    margin-top: 8px;
+    padding: 18px;
+    border-radius: 28px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(18px);
+  }
+
+  #photo {
+    display: none;
+  }
+
+  .upload-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 190px;
+    padding: 22px;
+    border-radius: 22px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    text-align: center;
+    transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  }
+
+  .upload-box:active {
+    transform: scale(0.98);
+  }
+
+  .upload-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 20px;
+    display: grid;
+    place-items: center;
+    background: rgba(255, 255, 255, 0.14);
+    font-size: 28px;
+  }
+
+  .upload-title {
+    margin-top: 4px;
+    font-size: 19px;
+    font-weight: 750;
+  }
+
+  .upload-text {
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 14px;
+    line-height: 1.35;
+    max-width: 250px;
+  }
+
+  .primary-button {
+    width: 100%;
+    height: 56px;
+    margin-top: 16px;
+    border: 0;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 14px 34px rgba(37, 99, 235, 0.35);
+  }
+
+  .primary-button:active {
+    transform: scale(0.99);
+  }
+
+  .primary-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .hint {
+    margin: 14px 4px 0;
+    color: rgba(255, 255, 255, 0.52);
+    font-size: 13px;
+    line-height: 1.4;
+    text-align: center;
+  }
+</style>
 </head>
 <body>
-  <h1>🎬 Создай своё видео</h1>
+  <main class="app">
+    <section class="hero">
+      <div class="badge">AI Video</div>
 
-  <input type="file" id="photo" accept="image/*" />
-  <br><br>
+      <h1>Создай своё видео</h1>
 
-  <button onclick="sendPhoto()">Создать видео</button>
+      <p class="subtitle">
+        Загрузи своё фото — бот создаст видео в этом стиле и пришлёт результат в Telegram.
+      </p>
+    </section>
+
+    <section class="card">
+      <label class="upload-box" for="photo">
+        <div class="upload-icon">📸</div>
+        <div class="upload-title">Выбрать фото</div>
+        <div class="upload-text" id="fileName">JPG или PNG, портретное фото</div>
+      </label>
+
+      <input id="photo" type="file" accept="image/*" />
+
+      <button class="primary-button" onclick="sendPhoto()">
+        Создать видео
+      </button>
+
+      <p class="hint">
+        После загрузки бот напишет, когда видео будет готово.
+      </p>
+    </section>
+  </main>
+</body>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
@@ -88,6 +256,18 @@ console.log('Template slug:', templateSlug);
 
       alert('Фото принято 🚀 Генерация началась. Скоро видео будет готово.');
     }
+    const photoInput = document.getElementById('photo');
+const fileName = document.getElementById('fileName');
+
+photoInput?.addEventListener('change', () => {
+  const file = photoInput.files?.[0];
+
+  if (file) {
+    fileName.textContent = file.name;
+  } else {
+    fileName.textContent = 'JPG или PNG, портретное фото';
+  }
+});
   </script>
 </body>
 </html>
