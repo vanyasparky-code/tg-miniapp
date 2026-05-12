@@ -809,13 +809,6 @@ async function processOrder(order) {
 
     return;
   }
-  await supabase
-    .from("orders")
-    .update({
-      status: "processing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
 
   const { data: template, error: templateError } = await supabase
     .from("templates")
@@ -861,6 +854,13 @@ async function processOrder(order) {
   console.log("Recovered completed order:", order.id);
   return;
 }
+  await supabase
+    .from("orders")
+    .update({
+      status: "processing",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", order.id);
 if (!order.bot_prepare_message_sent) {
   const prepareSent = await sendTelegramPreparingMessage(order);
 
@@ -955,7 +955,9 @@ async function checkOrders() {
 const { data: orders, error } = await supabase
   .from("orders")
   .select("*")
-  .in("status", ["photo_uploaded", "photo_ready", "video_ready_locked"])
+  .or(
+    "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null)"
+  )
   .limit(1);
 
   if (error) {
