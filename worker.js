@@ -193,6 +193,71 @@ async function sendTelegramErrorMessage(order) {
     return false;
   }
 }
+async function isUserSubscribedToChannel(telegramUserId) {
+  if (!process.env.CHANNEL_ID) {
+    console.log("No CHANNEL_ID found, skipping subscription check");
+    return true;
+  }
+
+  if (!telegramUserId) {
+    return false;
+  }
+
+  try {
+    const member = await telegramApi("getChatMember", {
+      chat_id: process.env.CHANNEL_ID,
+      user_id: telegramUserId,
+    });
+
+    const status = member.status;
+
+    if (
+      status === "creator" ||
+      status === "administrator" ||
+      status === "member"
+    ) {
+      return true;
+    }
+
+    if (status === "restricted" && member.is_member === true) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Subscription check failed:", error.message);
+    return false;
+  }
+}
+
+async function sendSubscriptionRequiredMessage(chatId, templateSlug = "repeat_001") {
+  const channelLink = process.env.CHANNEL_LINK || "https://t.me/";
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text:
+      "🔒 Чтобы создать видео, сначала подпишитесь на канал.\n\n" +
+      "После подписки вернитесь сюда и нажмите кнопку ещё раз.",
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Подписаться на канал",
+            url: channelLink,
+          },
+        ],
+        [
+          {
+            text: "Я подписался — продолжить",
+            url: `https://t.me/neuro_video_repeat_bot?start=${encodeURIComponent(
+              templateSlug
+            )}`,
+          },
+        ],
+      ],
+    },
+  });
+}
 async function sendTelegramPreparingMessage(order) {
   if (!process.env.BOT_TOKEN) {
     console.log("No BOT_TOKEN found, skipping preparing message");
@@ -505,13 +570,19 @@ async function handleStartMessage(message) {
 
   const parts = text.split(" ");
   const templateSlug = parts[1] || "repeat_001";
-
   const chatId = message.chat.id;
 
   console.log("Start command received:", {
     chatId,
     templateSlug,
   });
+
+  const subscribed = await isUserSubscribedToChannel(chatId);
+
+  if (!subscribed) {
+    await sendSubscriptionRequiredMessage(chatId, templateSlug);
+    return;
+  }
 
   await telegramApi("sendMessage", {
     chat_id: chatId,
@@ -717,7 +788,27 @@ async function generateVideoWithRetries(uploadId, template) {
 
 async function processOrder(order) {
   console.log("Processing order:", order.id);
+  const subscribed = await isUserSubscribedToChannel(order.telegram_user_id);
 
+  if (!subscribed) {
+    console.log("User is not subscribed, stopping order:", order.id);
+
+    await sendSubscriptionRequiredMessage(
+      order.telegram_user_id,
+      order.template_slug
+    );
+
+    await supabase
+      .from("orders")
+      .update({
+        status: "subscription_required",
+        error_message: "User is not subscribed to the channel",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+
+    return;
+  }
   await supabase
     .from("orders")
     .update({
