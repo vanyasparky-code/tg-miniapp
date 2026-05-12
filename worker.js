@@ -259,7 +259,7 @@ async function sendTelegramMessage(chatId, text) {
   });
 }
 async function sendStarsInvoice(chatId, order) {
-  const priceStars = Number(order.price_rub || 299);
+  const priceStars = Number(order.price_rub || 1);
 
   await telegramApi("sendInvoice", {
     chat_id: chatId,
