@@ -546,10 +546,13 @@ async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
 }
 
 async function createSeedanceJob(uploadId, template) {
-  const referenceElements = [
+  const medias = [
     {
-      id: uploadId,
-      type: "media_input",
+      data: {
+        id: uploadId,
+        type: "media_input",
+      },
+      role: "reference",
     },
   ];
 
@@ -559,8 +562,8 @@ async function createSeedanceJob(uploadId, template) {
     "seedance_2_0",
     "--prompt",
     template.video_prompt,
-    "--reference_elements",
-    JSON.stringify(referenceElements),
+    "--medias",
+    JSON.stringify(medias),
     "--aspect_ratio",
     template.aspect_ratio || "16:9",
     "--duration",
