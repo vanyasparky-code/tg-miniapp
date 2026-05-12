@@ -352,23 +352,40 @@ async function processOrder(order) {
   const seedanceJobId = await createSeedanceJob(enhancedUpload.id, template);
   console.log("Seedance job:", seedanceJobId);
 
-  const videoUrl = await waitForJob(seedanceJobId);
-  console.log("Video ready:", videoUrl);
+const videoUrl = await waitForJob(seedanceJobId);
+console.log("Video ready:", videoUrl);
 
-  const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
+const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
 
-  await supabase
-    .from("orders")
-    .update({
-      video_url: videoUrl,
-      preview_image_url: previewImageUrl,
-      status: "video_ready_locked",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
+await supabase
+  .from("orders")
+  .update({
+    video_url: videoUrl,
+    preview_image_url: previewImageUrl,
+    status: "video_ready_locked",
+    updated_at: new Date().toISOString(),
+  })
+  .eq("id", order.id);
 
-  console.log("Order completed:", order.id);
-}
+console.log("About to send Telegram preview:", {
+  orderId: order.id,
+  telegramUserId: order.telegram_user_id,
+  hasBotToken: Boolean(process.env.BOT_TOKEN),
+  previewImageUrl,
+});
+
+await sendTelegramPreview(order, previewImageUrl, template);
+
+await supabase
+  .from("orders")
+  .update({
+    bot_message_sent: true,
+    bot_message_sent_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  })
+  .eq("id", order.id);
+
+console.log("Order completed:", order.id);
 
 async function checkOrders() {
   console.log("Checking orders...");
