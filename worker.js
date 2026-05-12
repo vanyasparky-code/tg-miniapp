@@ -3,6 +3,26 @@ const { execFile } = require("child_process");
 const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
+async function setupHiggsfieldCredentials() {
+  if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
+    console.log("No HIGGSFIELD_CREDENTIALS_B64 found");
+    return;
+  }
+
+  const configDir = path.join(os.homedir(), ".config", "higgsfield");
+  const credentialsPath = path.join(configDir, "credentials.json");
+
+  await fs.mkdir(configDir, { recursive: true });
+
+  const credentialsJson = Buffer.from(
+    process.env.HIGGSFIELD_CREDENTIALS_B64,
+    "base64"
+  ).toString("utf8");
+
+  await fs.writeFile(credentialsPath, credentialsJson);
+
+  console.log("Higgsfield credentials file created");
+}
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -278,7 +298,13 @@ async function checkOrders() {
   }
 }
 
-console.log("Higgsfield worker started");
+async function startWorker() {
+  await setupHiggsfieldCredentials();
 
-setInterval(checkOrders, CHECK_INTERVAL_MS);
-checkOrders();
+  console.log("Higgsfield worker started");
+
+  setInterval(checkOrders, CHECK_INTERVAL_MS);
+  checkOrders();
+}
+
+startWorker();
