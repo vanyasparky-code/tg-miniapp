@@ -21,7 +21,11 @@
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const urlParams = new URLSearchParams(window.location.search);
-    const templateSlug = urlParams.get('startapp') || 'repeat_001';
+   let templateSlug = urlParams.get('startapp') || 'repeat_001';
+
+if (templateSlug === 'repeat') {
+  templateSlug = 'repeat_001';
+}
 
     async function sendPhoto() {
       const file = document.getElementById('photo').files[0];
