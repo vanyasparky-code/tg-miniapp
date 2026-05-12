@@ -146,31 +146,38 @@ async function createSeedanceJob(uploadId, template) {
 }
 
 async function waitForJob(jobId) {
-  const startedAt = Date.now();
-  let temporaryErrors = 0;
+  console.log("Waiting for job:", jobId);
 
-  while (Date.now() - startedAt < JOB_TIMEOUT_MS) {
-    try {
-      const jobs = await runHiggsfield([
-        "generate",
-        "list",
-        "--json",
-        "--size",
-        "20"
-      ]);
+  const result = await runHiggsfield([
+    "generate",
+    "wait",
+    jobId,
+    "--timeout",
+    "30m",
+    "--interval",
+    "10s",
+    "--quiet",
+    "--json"
+  ]);
 
-      const job = jobs.find((item) => item.id === jobId);
+  const job = Array.isArray(result) ? result[0] : result;
 
-      if (job) {
-        console.log("Job status:", jobId, job.status);
+  console.log("Wait result:", job);
 
-        if (job.status === "completed") {
-          if (!job.result_url) {
-            throw new Error(`Job completed but result_url is missing: ${jobId}`);
-          }
+  if (!job) {
+    throw new Error(`No job result returned: ${jobId}`);
+  }
 
-          return job.result_url;
-        }
+  if (job.status === "failed" || job.status === "error") {
+    throw new Error(`Higgsfield job failed: ${jobId}`);
+  }
+
+  if (!job.result_url) {
+    throw new Error(`Job finished but result_url is missing: ${jobId}`);
+  }
+
+  return job.result_url;
+}
 
         if (job.status === "failed" || job.status === "error") {
           throw new Error(`Higgsfield job failed: ${jobId}`);
