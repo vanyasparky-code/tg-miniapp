@@ -258,7 +258,37 @@ async function sendTelegramMessage(chatId, text) {
     text,
   });
 }
+async function sendStarsInvoice(chatId, order) {
+  const priceStars = Number(order.price_rub || 299);
 
+  await telegramApi("sendInvoice", {
+    chat_id: chatId,
+    title: "Полное видео",
+    description: "Оплата доступа к готовому видео без блюра.",
+    payload: `order:${order.id}`,
+    provider_token: "",
+    currency: "XTR",
+    prices: [
+      {
+        label: "Полное видео",
+        amount: priceStars,
+      },
+    ],
+  });
+
+  console.log("Stars invoice sent:", order.id);
+}
+
+async function sendTelegramVideo(chatId, videoUrl) {
+  await telegramApi("sendVideo", {
+    chat_id: chatId,
+    video: videoUrl,
+    caption: "🎬 Ваше полное видео готово!",
+    supports_streaming: true,
+  });
+
+  console.log("Full video sent:", chatId);
+}
 async function handlePayCallback(callbackQuery) {
   const callbackData = callbackQuery.data || "";
 
@@ -277,7 +307,7 @@ async function handlePayCallback(callbackQuery) {
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, status, paid, video_url, telegram_user_id")
+    .select("id, status, paid, video_url, telegram_user_id, price_rub")
     .eq("id", orderId)
     .single();
 
@@ -299,21 +329,122 @@ async function handlePayCallback(callbackQuery) {
 
   if (order.paid) {
     await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
-    await sendTelegramMessage(chatId, "Видео уже оплачено. Скоро отправим файл.");
+    await sendTelegramVideo(chatId, order.video_url);
     return;
   }
 
-  await answerCallbackQuery(
-    callbackQuery.id,
-    "Оплата скоро будет подключена. Заказ найден."
-  );
+  if (order.status !== "video_ready_locked" || !order.video_url) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Видео ещё не готово. Подождите немного."
+    );
+    return;
+  }
 
-  await sendTelegramMessage(
-    chatId,
-    `Заказ найден ✅\n\nСледующий шаг — подключим оплату Telegram Stars, после оплаты бот отправит полное видео.`
-  );
+  await answerCallbackQuery(callbackQuery.id, "Открываю оплату...");
+
+  await sendStarsInvoice(chatId, order);
+}
+async function handlePreCheckoutQuery(preCheckoutQuery) {
+  const payload = preCheckoutQuery.invoice_payload || "";
+
+  if (!payload.startsWith("order:")) {
+    await telegramApi("answerPreCheckoutQuery", {
+      pre_checkout_query_id: preCheckoutQuery.id,
+      ok: false,
+      error_message: "Некорректный заказ.",
+    });
+    return;
+  }
+
+  const orderId = payload.replace("order:", "");
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, status, paid, telegram_user_id")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    await telegramApi("answerPreCheckoutQuery", {
+      pre_checkout_query_id: preCheckoutQuery.id,
+      ok: false,
+      error_message: "Заказ не найден.",
+    });
+    return;
+  }
+
+  if (String(order.telegram_user_id) !== String(preCheckoutQuery.from?.id)) {
+    await telegramApi("answerPreCheckoutQuery", {
+      pre_checkout_query_id: preCheckoutQuery.id,
+      ok: false,
+      error_message: "Этот заказ принадлежит другому пользователю.",
+    });
+    return;
+  }
+
+  if (order.status !== "video_ready_locked") {
+    await telegramApi("answerPreCheckoutQuery", {
+      pre_checkout_query_id: preCheckoutQuery.id,
+      ok: false,
+      error_message: "Видео ещё не готово.",
+    });
+    return;
+  }
+
+  await telegramApi("answerPreCheckoutQuery", {
+    pre_checkout_query_id: preCheckoutQuery.id,
+    ok: true,
+  });
+
+  console.log("Pre-checkout approved:", orderId);
 }
 
+async function handleSuccessfulPayment(message) {
+  const payment = message.successful_payment;
+  const payload = payment?.invoice_payload || "";
+
+  if (!payload.startsWith("order:")) {
+    return;
+  }
+
+  const orderId = payload.replace("order:", "");
+  const chatId = message.chat.id;
+
+  console.log("Successful payment:", {
+    orderId,
+    chatId,
+    chargeId: payment.telegram_payment_charge_id,
+    totalAmount: payment.total_amount,
+    currency: payment.currency,
+  });
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, video_url, telegram_user_id")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order || !order.video_url) {
+    await sendTelegramMessage(
+      chatId,
+      "Оплата прошла, но видео не найдено. Напишите в поддержку."
+    );
+    return;
+  }
+
+  await supabase
+    .from("orders")
+    .update({
+      paid: true,
+      paid_at: new Date().toISOString(),
+      telegram_payment_charge_id: payment.telegram_payment_charge_id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderId);
+
+  await sendTelegramVideo(chatId, order.video_url);
+}
 async function checkTelegramUpdates() {
   if (!process.env.BOT_TOKEN) {
     return;
@@ -323,7 +454,7 @@ async function checkTelegramUpdates() {
     const updates = await telegramApi("getUpdates", {
       offset: telegramUpdateOffset,
       timeout: 0,
-      allowed_updates: ["callback_query"],
+      allowed_updates: ["callback_query", "pre_checkout_query", "message"],
     });
 
     if (!updates || updates.length === 0) {
@@ -334,7 +465,15 @@ async function checkTelegramUpdates() {
       telegramUpdateOffset = update.update_id + 1;
 
       if (update.callback_query) {
-        await handlePayCallback(update.callback_query);
+    await handlePayCallback(update.callback_query);
+  }
+
+  if (update.pre_checkout_query) {
+    await handlePreCheckoutQuery(update.pre_checkout_query);
+  }
+
+  if (update.message?.successful_payment) {
+    await handleSuccessfulPayment(update.message);
       }
     }
   } catch (error) {
