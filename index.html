@@ -254,7 +254,21 @@ console.log('Template slug:', templateSlug);
         return;
       }
 
-      alert('Фото принято 🚀 Генерация началась. Скоро видео будет готово.');
+      tg.showPopup(
+  {
+    title: "ПОВТОРИ ВИДЕО БОТ",
+    message:
+      "Фото принято 🚀\n\n" +
+      "Генерация началась. Скоро видео будет готово.\n\n" +
+      "Пока вы можете закрыть приложение.",
+    buttons: [
+      { id: "ok", type: "default", text: "OK" }
+    ]
+  },
+  function () {
+    tg.close();
+  }
+);
     }
     const photoInput = document.getElementById('photo');
 const fileName = document.getElementById('fileName');
