@@ -30,7 +30,7 @@ const supabase = createClient(
 );
 
 const CHECK_INTERVAL_MS = 15000;
-const JOB_TIMEOUT_MS = 15 * 60 * 1000;
+const JOB_TIMEOUT_MS = 30 * 60 * 1000;
 const JOB_POLL_MS = 20000;
 
 function runHiggsfield(args) {
@@ -147,31 +147,47 @@ async function createSeedanceJob(uploadId, template) {
 
 async function waitForJob(jobId) {
   const startedAt = Date.now();
+  let temporaryErrors = 0;
 
   while (Date.now() - startedAt < JOB_TIMEOUT_MS) {
-    const jobs = await runHiggsfield([
-      "generate",
-      "list",
-      "--json",
-      "--size",
-      "20"
-    ]);
+    try {
+      const jobs = await runHiggsfield([
+        "generate",
+        "list",
+        "--json",
+        "--size",
+        "20"
+      ]);
 
-    const job = jobs.find((item) => item.id === jobId);
+      const job = jobs.find((item) => item.id === jobId);
 
-    if (job) {
-      console.log("Job status:", jobId, job.status);
+      if (job) {
+        console.log("Job status:", jobId, job.status);
 
-      if (job.status === "completed") {
-        if (!job.result_url) {
-          throw new Error(`Job completed but result_url is missing: ${jobId}`);
+        if (job.status === "completed") {
+          if (!job.result_url) {
+            throw new Error(`Job completed but result_url is missing: ${jobId}`);
+          }
+
+          return job.result_url;
         }
 
-        return job.result_url;
+        if (job.status === "failed" || job.status === "error") {
+          throw new Error(`Higgsfield job failed: ${jobId}`);
+        }
       }
 
-      if (job.status === "failed" || job.status === "error") {
-        throw new Error(`Higgsfield job failed: ${jobId}`);
+      temporaryErrors = 0;
+    } catch (error) {
+      temporaryErrors += 1;
+
+      console.error(
+        `Temporary Higgsfield list error ${temporaryErrors}/5:`,
+        error.message
+      );
+
+      if (temporaryErrors >= 5) {
+        throw error;
       }
     }
 
