@@ -13,6 +13,7 @@ const supabase = createClient(
 
 const CHECK_INTERVAL_MS = 15000;
 const VIDEO_GENERATION_MAX_ATTEMPTS = 3;
+let telegramUpdateOffset = 0;
 
 async function setupHiggsfieldCredentials() {
   if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
@@ -217,7 +218,129 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
   console.log("Telegram preview sent:", order.id);
   return true;
 }
+async function telegramApi(method, payload) {
+  if (!process.env.BOT_TOKEN) {
+    console.log("No BOT_TOKEN found");
+    return null;
+  }
 
+  const response = await fetch(
+    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/${method}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(`Telegram API ${method} failed: ${JSON.stringify(data)}`);
+  }
+
+  return data.result;
+}
+
+async function answerCallbackQuery(callbackQueryId, text) {
+  await telegramApi("answerCallbackQuery", {
+    callback_query_id: callbackQueryId,
+    text,
+    show_alert: true,
+  });
+}
+
+async function sendTelegramMessage(chatId, text) {
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text,
+  });
+}
+
+async function handlePayCallback(callbackQuery) {
+  const callbackData = callbackQuery.data || "";
+
+  if (!callbackData.startsWith("pay:")) {
+    return;
+  }
+
+  const orderId = callbackData.replace("pay:", "");
+  const chatId = callbackQuery.message?.chat?.id;
+
+  console.log("Payment button clicked:", {
+    orderId,
+    chatId,
+    fromUserId: callbackQuery.from?.id,
+  });
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, status, paid, video_url, telegram_user_id")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Заказ не найден. Попробуйте создать видео заново."
+    );
+    return;
+  }
+
+  if (String(order.telegram_user_id) !== String(callbackQuery.from?.id)) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Этот заказ принадлежит другому пользователю."
+    );
+    return;
+  }
+
+  if (order.paid) {
+    await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
+    await sendTelegramMessage(chatId, "Видео уже оплачено. Скоро отправим файл.");
+    return;
+  }
+
+  await answerCallbackQuery(
+    callbackQuery.id,
+    "Оплата скоро будет подключена. Заказ найден."
+  );
+
+  await sendTelegramMessage(
+    chatId,
+    `Заказ найден ✅\n\nСледующий шаг — подключим оплату Telegram Stars, после оплаты бот отправит полное видео.`
+  );
+}
+
+async function checkTelegramUpdates() {
+  if (!process.env.BOT_TOKEN) {
+    return;
+  }
+
+  try {
+    const updates = await telegramApi("getUpdates", {
+      offset: telegramUpdateOffset,
+      timeout: 0,
+      allowed_updates: ["callback_query"],
+    });
+
+    if (!updates || updates.length === 0) {
+      return;
+    }
+
+    for (const update of updates) {
+      telegramUpdateOffset = update.update_id + 1;
+
+      if (update.callback_query) {
+        await handlePayCallback(update.callback_query);
+      }
+    }
+  } catch (error) {
+    console.error("Telegram updates error:", error.message);
+  }
+}
 async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
   const result = await runHiggsfield([
     "generate",
@@ -472,7 +595,10 @@ async function startWorker() {
   console.log("Higgsfield worker started");
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
+  setInterval(checkTelegramUpdates, 3000);
+
   checkOrders();
+  checkTelegramUpdates();
 }
 
 startWorker();
