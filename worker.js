@@ -546,22 +546,41 @@ async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
 }
 
 async function createSeedanceJob(uploadId, template) {
+  const imageMode = template.seedance_image_mode || "reference";
+
+  let imageArgs;
+
+  if (imageMode === "start_frame") {
+    console.log("Seedance image mode: start_frame");
+
+    imageArgs = [
+      "--image",
+      uploadId,
+    ];
+  } else {
+    console.log("Seedance image mode: reference");
+
+    imageArgs = [
+      "--medias",
+      JSON.stringify([
+        {
+          data: {
+            id: uploadId,
+            type: "media_input",
+          },
+          role: "image",
+        },
+      ]),
+    ];
+  }
+
   const result = await runHiggsfield([
     "generate",
     "create",
     "seedance_2_0",
     "--prompt",
     template.video_prompt,
-    "--medias",
-    JSON.stringify([
-      {
-        data: {
-          id: uploadId,
-          type: "media_input",
-        },
-        role: "image",
-      },
-    ]),
+    ...imageArgs,
     "--aspect_ratio",
     template.aspect_ratio || "16:9",
     "--duration",
