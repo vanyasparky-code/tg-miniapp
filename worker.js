@@ -167,6 +167,32 @@ async function createBlurredPreview(videoUrl, orderId) {
 
   return previewUrl;
 }
+async function sendTelegramErrorMessage(order) {
+  if (!process.env.BOT_TOKEN) {
+    console.log("No BOT_TOKEN found, skipping error message");
+    return false;
+  }
+
+  if (!order.telegram_user_id) {
+    console.log("No telegram_user_id for error message:", order.id);
+    return false;
+  }
+
+  try {
+    await telegramApi("sendMessage", {
+      chat_id: order.telegram_user_id,
+      text:
+        "⚠️ Произошла ошибка генерации.\n\n" +
+        "Попробуйте снова, пожалуйста.",
+    });
+
+    console.log("Telegram error message sent:", order.id);
+    return true;
+  } catch (error) {
+    console.error("Error message send failed:", error.message);
+    return false;
+  }
+}
 async function sendTelegramPreparingMessage(order) {
   if (!process.env.BOT_TOKEN) {
     console.log("No BOT_TOKEN found, skipping preparing message");
@@ -822,14 +848,18 @@ async function checkOrders() {
     } catch (error) {
       console.error("Order failed:", order.id, error.message);
 
-      await supabase
-        .from("orders")
-        .update({
-          status: "failed",
-          error_message: error.message,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", order.id);
+const errorSent = await sendTelegramErrorMessage(order);
+
+await supabase
+  .from("orders")
+  .update({
+    status: "failed",
+    error_message: error.message,
+    bot_error_message_sent: errorSent,
+    bot_error_message_sent_at: errorSent ? new Date().toISOString() : null,
+    updated_at: new Date().toISOString(),
+  })
+  .eq("id", order.id);
     }
   }
 }
