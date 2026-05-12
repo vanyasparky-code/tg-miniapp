@@ -26,11 +26,17 @@ const telegramUserId = tg?.initDataUnsafe?.user?.id
   ? String(tg.initDataUnsafe.user.id)
   : null;
     const urlParams = new URLSearchParams(window.location.search);
-   let templateSlug = urlParams.get('startapp') || 'repeat_001';
+let templateSlug =
+  urlParams.get('template') ||
+  urlParams.get('startapp') ||
+  tg?.initDataUnsafe?.start_param ||
+  'repeat_001';
 
 if (templateSlug === 'repeat') {
   templateSlug = 'repeat_001';
 }
+
+console.log('Template slug:', templateSlug);
 
     async function sendPhoto() {
       const file = document.getElementById('photo').files[0];
