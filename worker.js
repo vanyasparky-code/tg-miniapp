@@ -3,6 +3,8 @@ const { execFile } = require("child_process");
 const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
+const ffmpegPath = require("ffmpeg-static");
+const sharp = require("sharp");
 
 async function setupHiggsfieldCredentials() {
   if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
@@ -44,9 +46,9 @@ function runHiggsfield(args) {
         env: {
           ...process.env,
           HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN,
-          HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache"
+          HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache",
         },
-        maxBuffer: 1024 * 1024 * 20
+        maxBuffer: 1024 * 1024 * 50,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -63,6 +65,20 @@ function runHiggsfield(args) {
         }
       }
     );
+  });
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
+      if (error) {
+        console.error("Command error:", stderr || error.message);
+        reject(new Error(stderr || error.message));
+        return;
+      }
+
+      resolve(stdout);
+    });
   });
 }
 
@@ -86,7 +102,7 @@ async function uploadToHiggsfield(filePath) {
     "upload",
     "create",
     filePath,
-    "--json"
+    "--json",
   ]);
 
   if (!result.id) {
@@ -94,6 +110,55 @@ async function uploadToHiggsfield(filePath) {
   }
 
   return result;
+}
+
+async function uploadPreviewToSupabase(previewPath, orderId) {
+  const previewBuffer = await fs.readFile(previewPath);
+  const storagePath = `previews/${orderId}.jpg`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("media")
+    .upload(storagePath, previewBuffer, {
+      contentType: "image/jpeg",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Preview upload failed: ${uploadError.message}`);
+  }
+
+  return supabase.storage.from("media").getPublicUrl(storagePath).data.publicUrl;
+}
+
+async function createBlurredPreview(videoUrl, orderId) {
+  console.log("Creating blurred preview for order:", orderId);
+
+  const videoPath = await downloadFile(videoUrl, `video-${orderId}.mp4`);
+  const framePath = path.join(os.tmpdir(), `frame-${orderId}.jpg`);
+  const previewPath = path.join(os.tmpdir(), `preview-${orderId}.jpg`);
+
+  await runCommand(ffmpegPath, [
+    "-y",
+    "-i",
+    videoPath,
+    "-ss",
+    "00:00:01",
+    "-vframes",
+    "1",
+    framePath,
+  ]);
+
+  await sharp(framePath)
+    .resize({ width: 720 })
+    .blur(18)
+    .jpeg({ quality: 80 })
+    .toFile(previewPath);
+
+  const previewUrl = await uploadPreviewToSupabase(previewPath, orderId);
+
+  console.log("Preview ready:", previewUrl);
+
+  return previewUrl;
 }
 
 async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
@@ -107,14 +172,14 @@ async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
     JSON.stringify([
       {
         id: uploadId,
-        type: "media_input"
-      }
+        type: "media_input",
+      },
     ]),
     "--aspect_ratio",
     aspectRatio || "9:16",
     "--resolution",
     "2k",
-    "--json"
+    "--json",
   ]);
 
   return Array.isArray(result) ? result[0] : result.id;
@@ -139,7 +204,7 @@ async function createSeedanceJob(uploadId, template) {
     template.mode || "fast",
     "--genre",
     template.genre || "auto",
-    "--json"
+    "--json",
   ]);
 
   return Array.isArray(result) ? result[0] : result.id;
@@ -157,7 +222,7 @@ async function waitForJob(jobId) {
     "--interval",
     "10s",
     "--quiet",
-    "--json"
+    "--json",
   ]);
 
   const job = Array.isArray(result) ? result[0] : result;
@@ -186,7 +251,7 @@ async function processOrder(order) {
     .from("orders")
     .update({
       status: "processing",
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     })
     .eq("id", order.id);
 
@@ -224,7 +289,7 @@ async function processOrder(order) {
     .update({
       enhanced_photo_url: enhancedPhotoUrl,
       status: "photo_ready",
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     })
     .eq("id", order.id);
 
@@ -242,12 +307,15 @@ async function processOrder(order) {
   const videoUrl = await waitForJob(seedanceJobId);
   console.log("Video ready:", videoUrl);
 
+  const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
+
   await supabase
     .from("orders")
     .update({
       video_url: videoUrl,
+      preview_image_url: previewImageUrl,
       status: "video_ready_locked",
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     })
     .eq("id", order.id);
 
@@ -284,7 +352,7 @@ async function checkOrders() {
         .update({
           status: "failed",
           error_message: error.message,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
         .eq("id", order.id);
     }
