@@ -45,8 +45,6 @@ if (templateSlug === 'repeat') {
         return;
       }
 
-      alert('Загружаем фото...');
-
       const fileName = Date.now() + "_" + file.name;
 
       const { error: uploadError } = await supabaseClient
@@ -82,7 +80,7 @@ if (templateSlug === 'repeat') {
         return;
       }
 
-      alert('Фото принято 🚀\nГенерация началась. Скоро видео будет готово.');
+      alert('Фото принято 🚀 Генерация началась. Скоро видео будет готово.');
     }
   </script>
 </body>
