@@ -6,6 +6,14 @@ const path = require("path");
 const ffmpegPath = require("ffmpeg-static");
 const sharp = require("sharp");
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+const CHECK_INTERVAL_MS = 15000;
+const VIDEO_GENERATION_MAX_ATTEMPTS = 3;
+
 async function setupHiggsfieldCredentials() {
   if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
     console.log("No HIGGSFIELD_CREDENTIALS_B64 found");
@@ -29,13 +37,6 @@ async function setupHiggsfieldCredentials() {
   console.log("Higgsfield credentials size:", exists.size);
   console.log("Higgsfield credentials file created");
 }
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
-const CHECK_INTERVAL_MS = 15000;
 
 function runHiggsfield(args) {
   return new Promise((resolve, reject) => {
@@ -70,15 +71,20 @@ function runHiggsfield(args) {
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
-      if (error) {
-        console.error("Command error:", stderr || error.message);
-        reject(new Error(stderr || error.message));
-        return;
-      }
+    execFile(
+      command,
+      args,
+      { maxBuffer: 1024 * 1024 * 50 },
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error("Command error:", stderr || error.message);
+          reject(new Error(stderr || error.message));
+          return;
+        }
 
-      resolve(stdout);
-    });
+        resolve(stdout);
+      }
+    );
   });
 }
 
@@ -160,15 +166,16 @@ async function createBlurredPreview(videoUrl, orderId) {
 
   return previewUrl;
 }
+
 async function sendTelegramPreview(order, previewImageUrl, template) {
   if (!process.env.BOT_TOKEN) {
     console.log("No BOT_TOKEN found, skipping Telegram message");
-    return;
+    return false;
   }
 
   if (!order.telegram_user_id) {
     console.log("No telegram_user_id for order:", order.id);
-    return;
+    return false;
   }
 
   const caption =
@@ -208,7 +215,9 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
   }
 
   console.log("Telegram preview sent:", order.id);
+  return true;
 }
+
 async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
   const result = await runHiggsfield([
     "generate",
@@ -292,6 +301,39 @@ async function waitForJob(jobId) {
   return job.result_url;
 }
 
+async function generateVideoWithRetries(uploadId, template) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= VIDEO_GENERATION_MAX_ATTEMPTS; attempt++) {
+    try {
+      console.log(
+        `Seedance attempt ${attempt}/${VIDEO_GENERATION_MAX_ATTEMPTS}`
+      );
+
+      const seedanceJobId = await createSeedanceJob(uploadId, template);
+      console.log("Seedance job:", seedanceJobId);
+
+      const videoUrl = await waitForJob(seedanceJobId);
+      console.log("Seedance video ready:", videoUrl);
+
+      return videoUrl;
+    } catch (error) {
+      lastError = error;
+
+      console.error(`Seedance attempt ${attempt} failed:`, error.message);
+
+      if (attempt < VIDEO_GENERATION_MAX_ATTEMPTS) {
+        console.log("Retrying Seedance in 15 seconds...");
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+      }
+    }
+  }
+
+  throw new Error(
+    `Seedance failed after ${VIDEO_GENERATION_MAX_ATTEMPTS} attempts: ${lastError?.message}`
+  );
+}
+
 async function processOrder(order) {
   console.log("Processing order:", order.id);
 
@@ -349,10 +391,7 @@ async function processOrder(order) {
   const enhancedUpload = await uploadToHiggsfield(enhancedFilePath);
   console.log("Enhanced uploaded:", enhancedUpload.id);
 
-  const seedanceJobId = await createSeedanceJob(enhancedUpload.id, template);
-  console.log("Seedance job:", seedanceJobId);
-
-  const videoUrl = await waitForJob(seedanceJobId);
+  const videoUrl = await generateVideoWithRetries(enhancedUpload.id, template);
   console.log("Video ready:", videoUrl);
 
   const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
@@ -374,16 +413,18 @@ async function processOrder(order) {
     previewImageUrl,
   });
 
-  await sendTelegramPreview(order, previewImageUrl, template);
+  const sent = await sendTelegramPreview(order, previewImageUrl, template);
 
-  await supabase
-    .from("orders")
-    .update({
-      bot_message_sent: true,
-      bot_message_sent_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
+  if (sent) {
+    await supabase
+      .from("orders")
+      .update({
+        bot_message_sent: true,
+        bot_message_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  }
 
   console.log("Order completed:", order.id);
 }
