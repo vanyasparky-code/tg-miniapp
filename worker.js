@@ -167,7 +167,32 @@ async function createBlurredPreview(videoUrl, orderId) {
 
   return previewUrl;
 }
+async function sendTelegramPreparingMessage(order) {
+  if (!process.env.BOT_TOKEN) {
+    console.log("No BOT_TOKEN found, skipping preparing message");
+    return false;
+  }
 
+  if (!order.telegram_user_id) {
+    console.log("No telegram_user_id for preparing message:", order.id);
+    return false;
+  }
+
+  try {
+    await telegramApi("sendMessage", {
+      chat_id: order.telegram_user_id,
+      text:
+        "🎬 Ваше видео создаётся.\n\n" +
+        "В скором времени бот пришлёт вам результат.",
+    });
+
+    console.log("Telegram preparing message sent:", order.id);
+    return true;
+  } catch (error) {
+    console.error("Preparing message failed:", error.message);
+    return false;
+  }
+}
 async function sendTelegramPreview(order, previewImageUrl, template) {
   if (!process.env.BOT_TOKEN) {
     console.log("No BOT_TOKEN found, skipping Telegram message");
@@ -684,7 +709,20 @@ async function processOrder(order) {
   if (templateError || !template) {
     throw new Error(`Template not found: ${order.template_slug}`);
   }
+if (!order.bot_prepare_message_sent) {
+  const prepareSent = await sendTelegramPreparingMessage(order);
 
+  if (prepareSent) {
+    await supabase
+      .from("orders")
+      .update({
+        bot_prepare_message_sent: true,
+        bot_prepare_message_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  }
+}
   const originalFilePath = await downloadFile(
     order.original_photo_url,
     `original-${order.id}.jpg`
