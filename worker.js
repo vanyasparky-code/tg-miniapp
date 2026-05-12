@@ -826,6 +826,41 @@ async function processOrder(order) {
   if (templateError || !template) {
     throw new Error(`Template not found: ${order.template_slug}`);
   }
+  if (order.status === "video_ready_locked" && order.video_url) {
+  console.log("Recovering video_ready_locked order:", order.id);
+
+  let previewImageUrl = order.preview_image_url;
+
+  if (!previewImageUrl) {
+    previewImageUrl = await createBlurredPreview(order.video_url, order.id);
+
+    await supabase
+      .from("orders")
+      .update({
+        preview_image_url: previewImageUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  }
+
+  if (!order.bot_message_sent) {
+    const sent = await sendTelegramPreview(order, previewImageUrl, template);
+
+    if (sent) {
+      await supabase
+        .from("orders")
+        .update({
+          bot_message_sent: true,
+          bot_message_sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", order.id);
+    }
+  }
+
+  console.log("Recovered completed order:", order.id);
+  return;
+}
 if (!order.bot_prepare_message_sent) {
   const prepareSent = await sendTelegramPreparingMessage(order);
 
@@ -917,11 +952,11 @@ if (!order.bot_prepare_message_sent) {
 async function checkOrders() {
   console.log("Checking orders...");
 
-  const { data: orders, error } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("status", "photo_uploaded")
-    .limit(1);
+const { data: orders, error } = await supabase
+  .from("orders")
+  .select("*")
+  .in("status", ["photo_uploaded", "photo_ready", "video_ready_locked"])
+  .limit(1);
 
   if (error) {
     console.error("Supabase error:", error);
