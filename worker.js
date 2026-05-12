@@ -3,6 +3,7 @@ const { execFile } = require("child_process");
 const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
+
 async function setupHiggsfieldCredentials() {
   if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
     console.log("No HIGGSFIELD_CREDENTIALS_B64 found");
@@ -21,6 +22,9 @@ async function setupHiggsfieldCredentials() {
 
   await fs.writeFile(credentialsPath, credentialsJson);
 
+  const exists = await fs.stat(credentialsPath);
+  console.log("Higgsfield credentials path:", credentialsPath);
+  console.log("Higgsfield credentials size:", exists.size);
   console.log("Higgsfield credentials file created");
 }
 
@@ -30,8 +34,6 @@ const supabase = createClient(
 );
 
 const CHECK_INTERVAL_MS = 15000;
-const JOB_TIMEOUT_MS = 30 * 60 * 1000;
-const JOB_POLL_MS = 20000;
 
 function runHiggsfield(args) {
   return new Promise((resolve, reject) => {
@@ -39,17 +41,17 @@ function runHiggsfield(args) {
       "npm",
       ["exec", "-y", "--package=@higgsfield/cli", "--", "higgsfield", ...args],
       {
-env: {
-  ...process.env,
-  HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN,
-  HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache"
-},
+        env: {
+          ...process.env,
+          HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN,
+          HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache"
+        },
         maxBuffer: 1024 * 1024 * 20
       },
       (error, stdout, stderr) => {
         if (error) {
           console.error("Higgsfield error:", stderr || error.message);
-          reject(error);
+          reject(new Error(stderr || error.message));
           return;
         }
 
@@ -119,7 +121,7 @@ async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
 }
 
 async function createSeedanceJob(uploadId, template) {
-  const args = [
+  const result = await runHiggsfield([
     "generate",
     "create",
     "seedance_2_0",
@@ -138,9 +140,7 @@ async function createSeedanceJob(uploadId, template) {
     "--genre",
     template.genre || "auto",
     "--json"
-  ];
-
-  const result = await runHiggsfield(args);
+  ]);
 
   return Array.isArray(result) ? result[0] : result.id;
 }
@@ -179,31 +179,6 @@ async function waitForJob(jobId) {
   return job.result_url;
 }
 
-        if (job.status === "failed" || job.status === "error") {
-          throw new Error(`Higgsfield job failed: ${jobId}`);
-        }
-      }
-
-      temporaryErrors = 0;
-    } catch (error) {
-      temporaryErrors += 1;
-
-      console.error(
-        `Temporary Higgsfield list error ${temporaryErrors}/5:`,
-        error.message
-      );
-
-      if (temporaryErrors >= 5) {
-        throw error;
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
-  }
-
-  throw new Error(`Higgsfield job timeout: ${jobId}`);
-}
-
 async function processOrder(order) {
   console.log("Processing order:", order.id);
 
@@ -231,7 +206,6 @@ async function processOrder(order) {
   );
 
   const originalUpload = await uploadToHiggsfield(originalFilePath);
-
   console.log("Original uploaded:", originalUpload.id);
 
   const nanoJobId = await createNanoBananaJob(
@@ -243,7 +217,6 @@ async function processOrder(order) {
   console.log("Nano Banana job:", nanoJobId);
 
   const enhancedPhotoUrl = await waitForJob(nanoJobId);
-
   console.log("Enhanced photo:", enhancedPhotoUrl);
 
   await supabase
@@ -261,15 +234,12 @@ async function processOrder(order) {
   );
 
   const enhancedUpload = await uploadToHiggsfield(enhancedFilePath);
-
   console.log("Enhanced uploaded:", enhancedUpload.id);
 
   const seedanceJobId = await createSeedanceJob(enhancedUpload.id, template);
-
   console.log("Seedance job:", seedanceJobId);
 
   const videoUrl = await waitForJob(seedanceJobId);
-
   console.log("Video ready:", videoUrl);
 
   await supabase
