@@ -160,7 +160,55 @@ async function createBlurredPreview(videoUrl, orderId) {
 
   return previewUrl;
 }
+async function sendTelegramPreview(order, previewImageUrl, template) {
+  if (!process.env.BOT_TOKEN) {
+    console.log("No BOT_TOKEN found, skipping Telegram message");
+    return;
+  }
 
+  if (!order.telegram_user_id) {
+    console.log("No telegram_user_id for order:", order.id);
+    return;
+  }
+
+  const caption =
+    `🎬 Ваше видео готово!\n\n` +
+    `Это заблюренное превью. Полное видео будет доступно после оплаты.\n\n` +
+    `Стоимость: ${template.price_rub || 299} ₽`;
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: order.telegram_user_id,
+        photo: previewImageUrl,
+        caption,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: `Оплатить ${template.price_rub || 299} ₽ и скачать`,
+                callback_data: `pay:${order.id}`,
+              },
+            ],
+          ],
+        },
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(`Telegram sendPhoto failed: ${JSON.stringify(data)}`);
+  }
+
+  console.log("Telegram preview sent:", order.id);
+}
 async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
   const result = await runHiggsfield([
     "generate",
