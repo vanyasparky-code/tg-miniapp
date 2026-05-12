@@ -182,7 +182,7 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
   const caption =
     `🎬 Ваше видео готово!\n\n` +
     `Это заблюренное превью. Полное видео будет доступно после оплаты.\n\n` +
-    `Стоимость: ${template.price_rub || 1} ⭐`;
+    `Стоимость: 1 ⭐`;
 
   const response = await fetch(
     `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
@@ -445,6 +445,44 @@ async function handleSuccessfulPayment(message) {
 
   await sendTelegramVideo(chatId, order.video_url);
 }
+async function handleStartMessage(message) {
+  const text = message.text || "";
+
+  if (!text.startsWith("/start")) {
+    return;
+  }
+
+  const parts = text.split(" ");
+  const templateSlug = parts[1] || "repeat_001";
+
+  const chatId = message.chat.id;
+
+  console.log("Start command received:", {
+    chatId,
+    templateSlug,
+  });
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text:
+      "🎬 Создай своё видео\n\n" +
+      "Нажми кнопку ниже, загрузи фото — и бот сделает видео в этом стиле.",
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Открыть Mini App",
+            web_app: {
+              url: `https://tg-miniapp-liart.vercel.app?template=${encodeURIComponent(
+                templateSlug
+              )}`,
+            },
+          },
+        ],
+      ],
+    },
+  });
+}
 async function checkTelegramUpdates() {
   if (!process.env.BOT_TOKEN) {
     return;
@@ -474,6 +512,9 @@ async function checkTelegramUpdates() {
 
   if (update.message?.successful_payment) {
     await handleSuccessfulPayment(update.message);
+      }
+  if (update.message?.text) {
+    await handleStartMessage(update.message);
       }
     }
   } catch (error) {
