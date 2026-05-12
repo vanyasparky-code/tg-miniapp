@@ -11,7 +11,7 @@
   <br><br>
 
   <button onclick="sendPhoto()">Создать видео</button>
-
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <script>
@@ -19,7 +19,12 @@
     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrZ3ZzYWpnaXF6aW90dWVua3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4OTQyMjIsImV4cCI6MjA5MzQ3MDIyMn0.MsfW_3sWIcKT934By281v0mHohZTS_W1eyRBE-Jm57w";
 
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const tg = window.Telegram?.WebApp;
+tg?.ready();
 
+const telegramUserId = tg?.initDataUnsafe?.user?.id
+  ? String(tg.initDataUnsafe.user.id)
+  : null;
     const urlParams = new URLSearchParams(window.location.search);
    let templateSlug = urlParams.get('startapp') || 'repeat_001';
 
@@ -29,6 +34,11 @@ if (templateSlug === 'repeat') {
 
     async function sendPhoto() {
       const file = document.getElementById('photo').files[0];
+      if (!telegramUserId) {
+         alert('Открой приложение через Telegram, чтобы мы знали, кому отправить видео');
+         return;
+         }
+         
 
       if (!file) {
         alert('Загрузи фото');
@@ -59,6 +69,7 @@ if (templateSlug === 'repeat') {
         .from('orders')
         .insert([
           {
+            telegram_user_id: telegramUserId,
             template_slug: templateSlug,
             original_photo_url: publicUrl,
             status: 'photo_uploaded'
