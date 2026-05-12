@@ -182,7 +182,7 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
   const caption =
     `🎬 Ваше видео готово!\n\n` +
     `Это заблюренное превью. Полное видео будет доступно после оплаты.\n\n` +
-    `Стоимость: ${template.price_rub || 299} ₽`;
+    `Стоимость: ${template.price_rub || 1} ⭐`;
 
   const response = await fetch(
     `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
@@ -199,7 +199,7 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
           inline_keyboard: [
             [
               {
-                text: `Оплатить ${template.price_rub || 299} ₽ и скачать`,
+                text: `Оплатить 1 ⭐ и скачать`,
                 callback_data: `pay:${order.id}`,
               },
             ],
@@ -259,7 +259,7 @@ async function sendTelegramMessage(chatId, text) {
   });
 }
 async function sendStarsInvoice(chatId, order) {
-  const priceStars = Number(order.price_rub || 1);
+  const priceStars = 1;
 
   await telegramApi("sendInvoice", {
     chat_id: chatId,
