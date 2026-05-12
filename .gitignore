@@ -1,0 +1,8 @@
+node_modules
+.DS_Store
+test.jpg
+test.png
+input.png
+*.jpg
+*.jpeg
+*.png
