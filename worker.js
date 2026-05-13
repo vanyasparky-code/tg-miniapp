@@ -298,7 +298,7 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
   const caption =
     `🎬 Ваше видео готово!\n\n` +
     `Это заблюренное превью. Полное видео будет доступно после оплаты.\n\n` +
-    `Стоимость: 1 ⭐`;
+    `Стоимость: ${template.price_stars || 1} ⭐ или ${template.price_rub || 299} ₽`;
 
   const response = await fetch(
     `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
@@ -311,16 +311,22 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
         chat_id: order.telegram_user_id,
         photo: previewImageUrl,
         caption,
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: `Оплатить 1 ⭐ и скачать`,
-                callback_data: `pay:${order.id}`,
-              },
-            ],
-          ],
-        },
+reply_markup: {
+  inline_keyboard: [
+    [
+      {
+        text: `Оплатить ${template.price_stars || 1} ⭐`,
+        callback_data: `pay:${order.id}`,
+      },
+    ],
+    [
+      {
+        text: `Оплатить ${template.price_rub || 299} ₽ картой / СБП`,
+        callback_data: `card:${order.id}`,
+      },
+    ],
+  ],
+},
       }),
     }
   );
@@ -375,7 +381,7 @@ async function sendTelegramMessage(chatId, text) {
   });
 }
 async function sendStarsInvoice(chatId, order) {
-  const priceStars = 1;
+  const priceStars = Number(order.price_stars || 1);
 
   await telegramApi("sendInvoice", {
     chat_id: chatId,
@@ -423,7 +429,7 @@ async function handlePayCallback(callbackQuery) {
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, status, paid, video_url, telegram_user_id, price_rub")
+    .select("id, status, paid, video_url, telegram_user_id, price_rub, price_stars")
     .eq("id", orderId)
     .single();
 
@@ -854,13 +860,15 @@ async function processOrder(order) {
   console.log("Recovered completed order:", order.id);
   return;
 }
-  await supabase
-    .from("orders")
-    .update({
-      status: "processing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
+await supabase
+  .from("orders")
+  .update({
+    status: "processing",
+    price_rub: template.price_rub || 299,
+    price_stars: template.price_stars || 1,
+    updated_at: new Date().toISOString(),
+  })
+  .eq("id", order.id);
 if (!order.bot_prepare_message_sent) {
   const prepareSent = await sendTelegramPreparingMessage(order);
 
