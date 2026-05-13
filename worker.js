@@ -373,7 +373,222 @@ async function answerCallbackQuery(callbackQueryId, text) {
     show_alert: true,
   });
 }
+async function handleCardCallback(callbackQuery) {
+  const callbackData = callbackQuery.data || "";
 
+  if (!callbackData.startsWith("card:")) {
+    return;
+  }
+
+  const orderId = callbackData.replace("card:", "");
+  const chatId = callbackQuery.message?.chat?.id;
+
+  console.log("Card payment button clicked:", {
+    orderId,
+    chatId,
+    fromUserId: callbackQuery.from?.id,
+  });
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select(
+      "id, status, paid, video_url, telegram_user_id, price_rub, price_stars, yookassa_payment_url"
+    )
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    await answerCallbackQuery(callbackQuery.id, "Заказ не найден.");
+    return;
+  }
+
+  if (String(order.telegram_user_id) !== String(callbackQuery.from?.id)) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Этот заказ принадлежит другому пользователю."
+    );
+    return;
+  }
+
+  if (order.paid) {
+    await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
+    await sendTelegramVideo(chatId, order.video_url);
+    return;
+  }
+
+  if (order.status !== "video_ready_locked" || !order.video_url) {
+    await answerCallbackQuery(callbackQuery.id, "Видео ещё не готово.");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "Перед оплатой подтвердите оферту.");
+
+  await sendOfferConfirmationMessage(chatId, order);
+}
+async function sendOfferConfirmationMessage(chatId, order) {
+  const offerUrl = process.env.OFFER_URL || "https://telegra.ph/Oferta-servisa-Povtori-Video-Bot-05-13";
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text:
+      `💳 Оплата картой / СБП\n\n` +
+      `Стоимость: ${order.price_rub || 299} ₽\n\n` +
+      `Перед оплатой ознакомьтесь с офертой.`,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "📄 Открыть оферту",
+            url: offerUrl,
+          },
+        ],
+        [
+          {
+            text: "✅ С офертой ознакомлен",
+            callback_data: `offer_ok:${order.id}`,
+          },
+        ],
+      ],
+    },
+  });
+}
+async function sendOfferConfirmationMessage(chatId, order) {
+  const offerUrl = process.env.OFFER_URL || "https://telegra.ph/";
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text:
+      `💳 Оплата картой / СБП\n\n` +
+      `Стоимость: ${order.price_rub || 299} ₽\n\n` +
+      `Перед оплатой ознакомьтесь с офертой.`,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "📄 Открыть оферту",
+            url: offerUrl,
+          },
+        ],
+        [
+          {
+            text: "✅ С офертой ознакомлен",
+            callback_data: `offer_ok:${order.id}`,
+          },
+        ],
+      ],
+    },
+  });
+}
+async function handleOfferOkCallback(callbackQuery) {
+  const callbackData = callbackQuery.data || "";
+
+  if (!callbackData.startsWith("offer_ok:")) {
+    return;
+  }
+
+  const orderId = callbackData.replace("offer_ok:", "");
+  const chatId = callbackQuery.message?.chat?.id;
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select(
+      "id, status, paid, video_url, telegram_user_id, price_rub, yookassa_payment_url"
+    )
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    await answerCallbackQuery(callbackQuery.id, "Заказ не найден.");
+    return;
+  }
+
+  if (String(order.telegram_user_id) !== String(callbackQuery.from?.id)) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Этот заказ принадлежит другому пользователю."
+    );
+    return;
+  }
+
+  if (order.paid) {
+    await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
+    await sendTelegramVideo(chatId, order.video_url);
+    return;
+  }
+
+  if (order.status !== "video_ready_locked" || !order.video_url) {
+    await answerCallbackQuery(callbackQuery.id, "Видео ещё не готово.");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "Оферта подтверждена.");
+
+  await supabase
+    .from("orders")
+    .update({
+      offer_accepted: true,
+      offer_accepted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", order.id);
+
+  await sendYookassaPaymentLink(chatId, order);
+}
+async function handleOfferOkCallback(callbackQuery) {
+  const callbackData = callbackQuery.data || "";
+
+  if (!callbackData.startsWith("offer_ok:")) {
+    return;
+  }
+
+  const orderId = callbackData.replace("offer_ok:", "");
+  const chatId = callbackQuery.message?.chat?.id;
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select(
+      "id, status, paid, video_url, telegram_user_id, price_rub, yookassa_payment_url"
+    )
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    await answerCallbackQuery(callbackQuery.id, "Заказ не найден.");
+    return;
+  }
+
+  if (String(order.telegram_user_id) !== String(callbackQuery.from?.id)) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Этот заказ принадлежит другому пользователю."
+    );
+    return;
+  }
+
+  if (order.paid) {
+    await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
+    await sendTelegramVideo(chatId, order.video_url);
+    return;
+  }
+
+  if (order.status !== "video_ready_locked" || !order.video_url) {
+    await answerCallbackQuery(callbackQuery.id, "Видео ещё не готово.");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "Оферта подтверждена.");
+
+  await supabase
+    .from("orders")
+    .update({
+      offer_accepted: true,
+      offer_accepted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", order.id);
+
+  await sendYookassaPaymentLink(chatId, order);
+}
 async function sendTelegramMessage(chatId, text) {
   await telegramApi("sendMessage", {
     chat_id: chatId,
@@ -631,7 +846,9 @@ async function checkTelegramUpdates() {
       telegramUpdateOffset = update.update_id + 1;
 
       if (update.callback_query) {
-    await handlePayCallback(update.callback_query);
+      await handlePayCallback(update.callback_query);
+  await handleCardCallback(update.callback_query);
+  await handleOfferOkCallback(update.callback_query);
   }
 
   if (update.pre_checkout_query) {
