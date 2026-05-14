@@ -808,7 +808,6 @@ async function handleStartMessage(message) {
   await telegramApi("sendMessage", {
     chat_id: chatId,
     text:
-      text:
   "🎬 ПОВТОРИ ВИДЕО БОТ\n\n" +
   "Создание AI-видео по вашим фотографиям с помощью нейросетей.\n\n" +
   "👤 ИП: Краснов Иван Сергеевич\n" +
