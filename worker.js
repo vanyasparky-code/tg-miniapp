@@ -395,8 +395,8 @@ function getRobokassaConfig() {
   };
 }
 
-function md5Hex(value) {
-  return crypto.createHash("md5").update(value).digest("hex");
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function formatRobokassaOutSum(priceRub) {
@@ -434,7 +434,7 @@ function createRobokassaPaymentUrl(order) {
   };
   const shpTail = getShpSignatureTail(shpParams);
   const signatureBase = `${merchantLogin}:${outSum}:${invId}:${password1}:${shpTail}`;
-  const signature = md5Hex(signatureBase);
+  const signature = sha256Hex(signatureBase);
   const paymentUrl = new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
 
   paymentUrl.searchParams.set("MerchantLogin", merchantLogin);
@@ -1314,7 +1314,7 @@ function assertRobokassaSignature(params) {
   const signatureBase = `${outSum}:${invId}:${password2}${
     shpTail ? `:${shpTail}` : ""
   }`;
-  const expectedSignature = md5Hex(signatureBase);
+  const expectedSignature = sha256Hex(signatureBase);
 
   if (!timingSafeSignatureEqual(signatureValue, expectedSignature)) {
     const error = new Error("Invalid Robokassa signature");
