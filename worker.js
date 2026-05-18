@@ -1,6 +1,8 @@
 const { createClient } = require("@supabase/supabase-js");
 const { execFile } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs/promises");
+const http = require("http");
 const os = require("os");
 const path = require("path");
 const ffmpegPath = require("ffmpeg-static");
@@ -373,6 +375,107 @@ async function answerCallbackQuery(callbackQueryId, text) {
     show_alert: true,
   });
 }
+
+function getRobokassaConfig() {
+  const merchantLogin = process.env.ROBOKASSA_MERCHANT_LOGIN;
+  const password1 = process.env.ROBOKASSA_PASSWORD1;
+  const password2 = process.env.ROBOKASSA_PASSWORD2;
+
+  if (!merchantLogin || !password1 || !password2) {
+    throw new Error("Robokassa env vars are not configured");
+  }
+
+  return {
+    merchantLogin,
+    password1,
+    password2,
+    isTest: ["1", "true", "yes"].includes(
+      String(process.env.ROBOKASSA_TEST || "").toLowerCase()
+    ),
+  };
+}
+
+function md5Hex(value) {
+  return crypto.createHash("md5").update(value).digest("hex");
+}
+
+function formatRobokassaOutSum(priceRub) {
+  const amount = Number(priceRub || 299);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`Invalid Robokassa amount: ${priceRub}`);
+  }
+
+  return amount.toFixed(2);
+}
+
+function createRobokassaInvoiceId(orderId) {
+  const hashSuffix = parseInt(
+    crypto.createHash("sha1").update(String(orderId)).digest("hex").slice(0, 8),
+    16
+  ) % 100000;
+
+  return `${Date.now()}${String(hashSuffix).padStart(5, "0")}`;
+}
+
+function getShpSignatureTail(params) {
+  return Object.entries(params)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(":");
+}
+
+function createRobokassaPaymentUrl(order) {
+  const { merchantLogin, password1, isTest } = getRobokassaConfig();
+  const outSum = formatRobokassaOutSum(order.price_rub);
+  const invId = createRobokassaInvoiceId(order.id);
+  const shpParams = {
+    Shp_orderId: String(order.id),
+  };
+  const shpTail = getShpSignatureTail(shpParams);
+  const signatureBase = `${merchantLogin}:${outSum}:${invId}:${password1}:${shpTail}`;
+  const signature = md5Hex(signatureBase);
+  const paymentUrl = new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
+
+  paymentUrl.searchParams.set("MerchantLogin", merchantLogin);
+  paymentUrl.searchParams.set("OutSum", outSum);
+  paymentUrl.searchParams.set("InvId", invId);
+  paymentUrl.searchParams.set("Description", `Оплата заказа ${order.id}`);
+  paymentUrl.searchParams.set("SignatureValue", signature);
+  paymentUrl.searchParams.set("Culture", "ru");
+
+  for (const [key, value] of Object.entries(shpParams)) {
+    paymentUrl.searchParams.set(key, value);
+  }
+
+  if (isTest) {
+    paymentUrl.searchParams.set("IsTest", "1");
+  }
+
+  return paymentUrl.toString();
+}
+
+async function sendRobokassaPaymentLink(chatId, order) {
+  const paymentUrl = createRobokassaPaymentUrl(order);
+
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text:
+      `✅ Оферта подтверждена.\n\n` +
+      `Нажмите кнопку ниже, чтобы оплатить ${order.price_rub || 299} ₽ картой или через СБП.`,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Оплатить через Robokassa",
+            url: paymentUrl,
+          },
+        ],
+      ],
+    },
+  });
+}
+
 async function handleCardCallback(callbackQuery) {
   const callbackData = callbackQuery.data || "";
 
@@ -392,7 +495,7 @@ async function handleCardCallback(callbackQuery) {
   const { data: order, error } = await supabase
     .from("orders")
     .select(
-      "id, status, paid, video_url, telegram_user_id, price_rub, price_stars, yookassa_payment_url"
+      "id, status, paid, video_url, telegram_user_id, price_rub, price_stars"
     )
     .eq("id", orderId)
     .single();
@@ -426,34 +529,9 @@ async function handleCardCallback(callbackQuery) {
   await sendOfferConfirmationMessage(chatId, order);
 }
 async function sendOfferConfirmationMessage(chatId, order) {
-  const offerUrl = process.env.OFFER_URL || "https://telegra.ph/Oferta-servisa-Povtori-Video-Bot-05-13";
-
-  await telegramApi("sendMessage", {
-    chat_id: chatId,
-    text:
-      `💳 Оплата картой / СБП\n\n` +
-      `Стоимость: ${order.price_rub || 299} ₽\n\n` +
-      `Перед оплатой ознакомьтесь с офертой.`,
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: "📄 Открыть оферту",
-            url: offerUrl,
-          },
-        ],
-        [
-          {
-            text: "✅ С офертой ознакомлен",
-            callback_data: `offer_ok:${order.id}`,
-          },
-        ],
-      ],
-    },
-  });
-}
-async function sendOfferConfirmationMessage(chatId, order) {
-  const offerUrl = process.env.OFFER_URL || "https://telegra.ph/";
+  const offerUrl =
+    process.env.OFFER_URL ||
+    "https://telegra.ph/Oferta-servisa-Povtori-Video-Bot-05-13";
 
   await telegramApi("sendMessage", {
     chat_id: chatId,
@@ -492,7 +570,7 @@ async function handleOfferOkCallback(callbackQuery) {
   const { data: order, error } = await supabase
     .from("orders")
     .select(
-      "id, status, paid, video_url, telegram_user_id, price_rub, yookassa_payment_url"
+      "id, status, paid, video_url, telegram_user_id, price_rub"
     )
     .eq("id", orderId)
     .single();
@@ -532,62 +610,7 @@ async function handleOfferOkCallback(callbackQuery) {
     })
     .eq("id", order.id);
 
-  await sendYookassaPaymentLink(chatId, order);
-}
-async function handleOfferOkCallback(callbackQuery) {
-  const callbackData = callbackQuery.data || "";
-
-  if (!callbackData.startsWith("offer_ok:")) {
-    return;
-  }
-
-  const orderId = callbackData.replace("offer_ok:", "");
-  const chatId = callbackQuery.message?.chat?.id;
-
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select(
-      "id, status, paid, video_url, telegram_user_id, price_rub, yookassa_payment_url"
-    )
-    .eq("id", orderId)
-    .single();
-
-  if (error || !order) {
-    await answerCallbackQuery(callbackQuery.id, "Заказ не найден.");
-    return;
-  }
-
-  if (String(order.telegram_user_id) !== String(callbackQuery.from?.id)) {
-    await answerCallbackQuery(
-      callbackQuery.id,
-      "Этот заказ принадлежит другому пользователю."
-    );
-    return;
-  }
-
-  if (order.paid) {
-    await answerCallbackQuery(callbackQuery.id, "Видео уже оплачено.");
-    await sendTelegramVideo(chatId, order.video_url);
-    return;
-  }
-
-  if (order.status !== "video_ready_locked" || !order.video_url) {
-    await answerCallbackQuery(callbackQuery.id, "Видео ещё не готово.");
-    return;
-  }
-
-  await answerCallbackQuery(callbackQuery.id, "Оферта подтверждена.");
-
-  await supabase
-    .from("orders")
-    .update({
-      offer_accepted: true,
-      offer_accepted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
-
-  await sendYookassaPaymentLink(chatId, order);
+  await sendRobokassaPaymentLink(chatId, order);
 }
 async function sendTelegramMessage(chatId, text) {
   await telegramApi("sendMessage", {
@@ -1232,10 +1255,251 @@ await supabase
   }
 }
 
+function getRobokassaParam(params, names) {
+  for (const name of names) {
+    const value = params.get(name);
+
+    if (value !== null && value !== undefined && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function timingSafeSignatureEqual(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  const leftBuffer = Buffer.from(String(left).toLowerCase(), "utf8");
+  const rightBuffer = Buffer.from(String(right).toLowerCase(), "utf8");
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function collectRobokassaShpParams(params) {
+  const shpParams = {};
+
+  for (const [key, value] of params.entries()) {
+    if (key.toLowerCase().startsWith("shp_")) {
+      shpParams[key] = value;
+    }
+  }
+
+  return shpParams;
+}
+
+function assertRobokassaSignature(params) {
+  const { password2 } = getRobokassaConfig();
+  const outSum = getRobokassaParam(params, ["OutSum", "out_sum"]);
+  const invId = getRobokassaParam(params, ["InvId", "InvID", "InvoiceID"]);
+  const signatureValue = getRobokassaParam(params, [
+    "SignatureValue",
+    "signatureValue",
+    "signature",
+  ]);
+
+  if (!outSum || !invId || !signatureValue) {
+    const error = new Error("Missing Robokassa result params");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const shpTail = getShpSignatureTail(collectRobokassaShpParams(params));
+  const signatureBase = `${outSum}:${invId}:${password2}${
+    shpTail ? `:${shpTail}` : ""
+  }`;
+  const expectedSignature = md5Hex(signatureBase);
+
+  if (!timingSafeSignatureEqual(signatureValue, expectedSignature)) {
+    const error = new Error("Invalid Robokassa signature");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { outSum, invId };
+}
+
+function assertRobokassaAmount(outSum, order) {
+  const paidAmount = Number(outSum);
+  const expectedAmount = Number(formatRobokassaOutSum(order.price_rub));
+
+  if (
+    !Number.isFinite(paidAmount) ||
+    Math.abs(paidAmount - expectedAmount) > 0.01
+  ) {
+    const error = new Error(
+      `Robokassa amount mismatch for order ${order.id}: ${outSum}`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function handleRobokassaResult(params) {
+  const { outSum, invId } = assertRobokassaSignature(params);
+  const orderId = getRobokassaParam(params, ["Shp_orderId", "Shp_order_id"]);
+
+  if (!orderId) {
+    const error = new Error("Missing Robokassa order id");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, paid, video_url, telegram_user_id, price_rub")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    const notFoundError = new Error(`Robokassa order not found: ${orderId}`);
+    notFoundError.statusCode = 404;
+    throw notFoundError;
+  }
+
+  assertRobokassaAmount(outSum, order);
+
+  if (!order.video_url) {
+    throw new Error(`Paid Robokassa order has no video_url: ${order.id}`);
+  }
+
+  if (!order.paid) {
+    const now = new Date().toISOString();
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({
+        paid: true,
+        payment_method: "robokassa",
+        paid_at: now,
+        updated_at: now,
+      })
+      .eq("id", order.id);
+
+    if (updateError) {
+      throw new Error(`Robokassa order update failed: ${updateError.message}`);
+    }
+  }
+
+  await sendTelegramVideo(order.telegram_user_id, order.video_url);
+
+  console.log("Robokassa payment processed:", {
+    orderId: order.id,
+    invId,
+    outSum,
+  });
+
+  return invId;
+}
+
+async function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+
+    req.on("data", (chunk) => {
+      body += chunk;
+
+      if (body.length > 1024 * 1024) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function parseRequestParams(req, body) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const params = new URLSearchParams(requestUrl.search);
+  const contentType = req.headers["content-type"] || "";
+
+  if (!body) {
+    return params;
+  }
+
+  if (contentType.includes("application/json")) {
+    const parsed = JSON.parse(body);
+
+    for (const [key, value] of Object.entries(parsed)) {
+      params.set(key, String(value));
+    }
+
+    return params;
+  }
+
+  const bodyParams = new URLSearchParams(body);
+
+  for (const [key, value] of bodyParams.entries()) {
+    params.set(key, value);
+  }
+
+  return params;
+}
+
+function sendHttpResponse(res, statusCode, body) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.end(body);
+}
+
+async function handleHttpRequest(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+  if (requestUrl.pathname === "/" || requestUrl.pathname === "/health") {
+    sendHttpResponse(res, 200, "OK");
+    return;
+  }
+
+  if (requestUrl.pathname !== "/robokassa-result") {
+    sendHttpResponse(res, 404, "Not found");
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "POST") {
+    sendHttpResponse(res, 405, "Method not allowed");
+    return;
+  }
+
+  try {
+    const body = req.method === "POST" ? await readRequestBody(req) : "";
+    const params = parseRequestParams(req, body);
+    const invId = await handleRobokassaResult(params);
+
+    sendHttpResponse(res, 200, `OK${invId}`);
+  } catch (error) {
+    console.error("Robokassa result error:", error.message);
+    sendHttpResponse(res, error.statusCode || 500, error.message);
+  }
+}
+
+function startHttpServer() {
+  const port = Number(process.env.PORT || 3000);
+  const server = http.createServer((req, res) => {
+    handleHttpRequest(req, res).catch((error) => {
+      console.error("HTTP server error:", error.message);
+      sendHttpResponse(res, 500, "Internal server error");
+    });
+  });
+
+  server.listen(port, () => {
+    console.log(`HTTP server listening on port ${port}`);
+  });
+
+  return server;
+}
+
 async function startWorker() {
   await setupHiggsfieldCredentials();
 
   console.log("Higgsfield worker started");
+  startHttpServer();
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
   setInterval(checkTelegramUpdates, 3000);
