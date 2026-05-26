@@ -1418,18 +1418,9 @@ async function processOrder(order) {
 }
 const resolvedPhotoModel = resolvePhotoModel(template.photo_model);
 const resolvedVideoModel = resolveVideoModel(template.video_model);
-const videoDuration = getTemplateInteger(
-  template.video_duration,
-  getTemplateInteger(template.duration, 5)
-);
-const videoResolution = getTemplateText(
-  template.video_resolution,
-  getTemplateText(template.resolution, "720p")
-);
-const videoAspectRatio = getTemplateText(
-  template.video_aspect_ratio,
-  getTemplateText(template.aspect_ratio, "16:9")
-);
+const videoDuration = getTemplateInteger(template.duration, 5);
+const videoResolution = getTemplateText(template.resolution, "720p");
+const videoAspectRatio = getTemplateText(template.aspect_ratio, "16:9");
 
 console.log("Photo model:", resolvedPhotoModel);
 console.log("Video model:", resolvedVideoModel);
