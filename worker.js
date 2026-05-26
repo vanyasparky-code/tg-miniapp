@@ -1245,6 +1245,49 @@ function getTemplateText(value, fallback) {
   return fallback;
 }
 
+function getTemplateObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsedValue = JSON.parse(value);
+
+      if (
+        parsedValue &&
+        typeof parsedValue === "object" &&
+        !Array.isArray(parsedValue)
+      ) {
+        return parsedValue;
+      }
+    } catch (error) {
+      console.error("Invalid template video_params JSON:", error.message);
+    }
+  }
+
+  return {};
+}
+
+function hasTemplateParams(params) {
+  return Object.keys(params).length > 0;
+}
+
+function getModelSpecificVideoParams(params, excludedKeys = []) {
+  const excluded = new Set(excludedKeys);
+  const modelParams = {};
+
+  for (const [key, value] of Object.entries(params)) {
+    if (excluded.has(key) || value === null || value === undefined) {
+      continue;
+    }
+
+    modelParams[key] = value;
+  }
+
+  return modelParams;
+}
+
 async function createPhotoGeneration(model, prompt, photoUrls) {
   const inputImages = photoUrls.map((imageUrl) => ({
     type: "image_url",
@@ -1263,24 +1306,7 @@ async function createPhotoGeneration(model, prompt, photoUrls) {
   );
 }
 
-function buildVideoPayload(
-  prompt,
-  imageUrl,
-  duration,
-  resolution,
-  aspectRatio,
-  options = {}
-) {
-  const imageMode = options.imageMode || "reference";
-  const payload = {
-    prompt,
-    aspect_ratio: aspectRatio,
-    duration,
-    resolution,
-    mode: options.mode || "std",
-    genre: options.genre || "auto",
-  };
-
+function addVideoImageInput(payload, imageUrl, imageMode = "reference") {
   if (imageMode === "start_frame") {
     console.log("Video image mode: start_frame");
 
@@ -1302,6 +1328,104 @@ function buildVideoPayload(
   return payload;
 }
 
+function buildBaseVideoPayload(prompt, duration, resolution, aspectRatio) {
+  return {
+    prompt,
+    aspect_ratio: aspectRatio,
+    duration,
+    resolution,
+  };
+}
+
+function buildSeedanceVideoPayload(
+  prompt,
+  imageUrl,
+  duration,
+  resolution,
+  aspectRatio,
+  options = {}
+) {
+  const videoParams = getTemplateObject(options.videoParams);
+  const hasVideoParams = hasTemplateParams(videoParams);
+  const payload = {
+    ...buildBaseVideoPayload(prompt, duration, resolution, aspectRatio),
+    ...getModelSpecificVideoParams(videoParams, [
+      "prompt",
+      "aspect_ratio",
+      "duration",
+      "resolution",
+      "image",
+      "image_url",
+      "medias",
+    ]),
+    mode: hasVideoParams
+      ? getTemplateText(videoParams.mode, "std")
+      : getTemplateText(options.legacyMode, "std"),
+    genre: hasVideoParams
+      ? getTemplateText(videoParams.genre, "auto")
+      : getTemplateText(options.legacyGenre, "auto"),
+  };
+
+  return addVideoImageInput(payload, imageUrl, options.imageMode);
+}
+
+function buildGenericVideoPayload(
+  prompt,
+  imageUrl,
+  duration,
+  resolution,
+  aspectRatio,
+  options = {}
+) {
+  const videoParams = getTemplateObject(options.videoParams);
+  const payload = {
+    ...buildBaseVideoPayload(prompt, duration, resolution, aspectRatio),
+    ...getModelSpecificVideoParams(videoParams, [
+      "prompt",
+      "aspect_ratio",
+      "duration",
+      "resolution",
+      "image",
+      "image_url",
+      "medias",
+      "mode",
+      "genre",
+    ]),
+  };
+
+  return addVideoImageInput(payload, imageUrl, options.imageMode);
+}
+
+function buildVideoPayload(
+  model,
+  prompt,
+  imageUrl,
+  duration,
+  resolution,
+  aspectRatio,
+  options = {}
+) {
+  if (model === "seedance_2_0") {
+    return buildSeedanceVideoPayload(
+      prompt,
+      imageUrl,
+      duration,
+      resolution,
+      aspectRatio,
+      options
+    );
+  }
+
+  return buildGenericVideoPayload(
+    prompt,
+    imageUrl,
+    duration,
+    resolution,
+    aspectRatio,
+    options
+  );
+}
+
 async function createVideoGeneration(
   model,
   prompt,
@@ -1315,6 +1439,7 @@ async function createVideoGeneration(
     "Video generation",
     model,
     buildVideoPayload(
+      model,
       prompt,
       enhancedPhoto,
       duration,
@@ -1485,8 +1610,9 @@ if (!order.bot_prepare_message_sent) {
     videoAspectRatio,
     {
       imageMode: template.seedance_image_mode || "reference",
-      mode: getTemplateText(template.mode, "std"),
-      genre: getTemplateText(template.genre, "auto"),
+      videoParams: template.video_params,
+      legacyMode: template.mode,
+      legacyGenre: template.genre,
     }
   );
   console.log("Video ready:", videoUrl);
