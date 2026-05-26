@@ -17,12 +17,24 @@ const CHECK_INTERVAL_MS = 15000;
 const GENERATION_MAX_ATTEMPTS = 3;
 const HIGGSFIELD_API_BASE_URL =
   process.env.HIGGSFIELD_API_BASE_URL || "https://platform.higgsfield.ai";
-const HIGGSFIELD_NANO_BANANA_MODEL_ID =
-  process.env.HIGGSFIELD_NANO_BANANA_MODEL_ID || "nano_banana_2";
-const HIGGSFIELD_SEEDANCE_MODEL_ID =
-  process.env.HIGGSFIELD_SEEDANCE_MODEL_ID || "seedance_2_0";
 const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_PHOTO_MODEL = "nano_banana";
+const DEFAULT_VIDEO_MODEL = "seedance_2";
+const PHOTO_MODEL_ALIASES = {
+  nano_banana: "nano_banana_2",
+  nano_banana_2: "nano_banana_2",
+  nano_banana_pro: "nano_banana_pro",
+};
+const VIDEO_MODEL_ALIASES = {
+  seedance_2: "seedance_2_0",
+  seedance_2_0: "seedance_2_0",
+  kling_3: "kling_3",
+  kling_3_0: "kling_3_0",
+  veo_3: "veo_3",
+  wan_2_2: "wan_2_2",
+  wan_2_5: "wan_2_5",
+};
 let telegramUpdateOffset = 0;
 
 function runCommand(command, args) {
@@ -276,6 +288,36 @@ async function runGenerationWithRetries(label, modelId, payload) {
   throw new Error(
     `${label} failed after ${GENERATION_MAX_ATTEMPTS} attempts: ${lastError?.message}`
   );
+}
+
+function normalizeTemplateModel(model, defaultModel) {
+  if (typeof model !== "string" || !model.trim()) {
+    return defaultModel;
+  }
+
+  return model.trim().toLowerCase();
+}
+
+function resolvePhotoModel(model) {
+  const normalizedModel = normalizeTemplateModel(model, DEFAULT_PHOTO_MODEL);
+  const resolvedModel = PHOTO_MODEL_ALIASES[normalizedModel];
+
+  if (!resolvedModel) {
+    throw new Error(`Unsupported photo model: ${model}`);
+  }
+
+  return resolvedModel;
+}
+
+function resolveVideoModel(model) {
+  const normalizedModel = normalizeTemplateModel(model, DEFAULT_VIDEO_MODEL);
+  const resolvedModel = VIDEO_MODEL_ALIASES[normalizedModel];
+
+  if (!resolvedModel) {
+    throw new Error(`Unsupported video model: ${model}`);
+  }
+
+  return resolvedModel;
 }
 
 async function downloadFile(url, filename) {
@@ -1095,41 +1137,66 @@ function getOrderPhotoUrls(order) {
   return [];
 }
 
-async function generateNanoBananaImage(imageUrls, photoPrompt, aspectRatio) {
-  const inputImages = imageUrls.map((imageUrl) => ({
+function getTemplateInteger(value, fallback) {
+  const number = Number(value);
+
+  if (Number.isInteger(number) && number > 0) {
+    return number;
+  }
+
+  return fallback;
+}
+
+function getTemplateText(value, fallback) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return fallback;
+}
+
+async function createPhotoGeneration(model, prompt, photoUrls) {
+  const inputImages = photoUrls.map((imageUrl) => ({
     type: "image_url",
     image_url: imageUrl,
   }));
 
   return runGenerationWithRetries(
-    "Nano Banana",
-    HIGGSFIELD_NANO_BANANA_MODEL_ID,
+    "Photo generation",
+    model,
     {
-      prompt: photoPrompt,
+      prompt,
       input_images: inputImages,
-      aspect_ratio: aspectRatio || "9:16",
+      aspect_ratio: "9:16",
       resolution: "2k",
     }
   );
 }
 
-function buildSeedancePayload(imageUrl, template) {
-  const imageMode = template.seedance_image_mode || "reference";
+function buildVideoPayload(
+  prompt,
+  imageUrl,
+  duration,
+  resolution,
+  aspectRatio,
+  options = {}
+) {
+  const imageMode = options.imageMode || "reference";
   const payload = {
-    prompt: template.video_prompt,
-    aspect_ratio: template.aspect_ratio || "16:9",
-    duration: template.duration || 5,
-    resolution: template.resolution || "720p",
-    mode: template.mode || "std",
-    genre: template.genre || "auto",
+    prompt,
+    aspect_ratio: aspectRatio,
+    duration,
+    resolution,
+    mode: options.mode || "std",
+    genre: options.genre || "auto",
   };
 
   if (imageMode === "start_frame") {
-    console.log("Seedance image mode: start_frame");
+    console.log("Video image mode: start_frame");
 
     payload.image_url = imageUrl;
   } else {
-    console.log("Seedance image mode: reference");
+    console.log("Video image mode: reference");
 
     payload.medias = [
       {
@@ -1145,16 +1212,27 @@ function buildSeedancePayload(imageUrl, template) {
   return payload;
 }
 
-async function generateSeedanceVideo(imageUrl, template) {
+async function createVideoGeneration(
+  model,
+  prompt,
+  enhancedPhoto,
+  duration,
+  resolution,
+  aspectRatio,
+  options = {}
+) {
   return runGenerationWithRetries(
-    "Seedance",
-    HIGGSFIELD_SEEDANCE_MODEL_ID,
-    buildSeedancePayload(imageUrl, template)
+    "Video generation",
+    model,
+    buildVideoPayload(
+      prompt,
+      enhancedPhoto,
+      duration,
+      resolution,
+      aspectRatio,
+      options
+    )
   );
-}
-
-async function generateVideoWithRetries(imageUrl, template) {
-  return generateSeedanceVideo(imageUrl, template);
 }
 
 async function processOrder(order) {
@@ -1225,6 +1303,24 @@ async function processOrder(order) {
   console.log("Recovered completed order:", order.id);
   return;
 }
+const resolvedPhotoModel = resolvePhotoModel(template.photo_model);
+const resolvedVideoModel = resolveVideoModel(template.video_model);
+const videoDuration = getTemplateInteger(
+  template.video_duration,
+  getTemplateInteger(template.duration, 5)
+);
+const videoResolution = getTemplateText(
+  template.video_resolution,
+  getTemplateText(template.resolution, "720p")
+);
+const videoAspectRatio = getTemplateText(
+  template.video_aspect_ratio,
+  getTemplateText(template.aspect_ratio, "16:9")
+);
+
+console.log("Photo model:", resolvedPhotoModel);
+console.log("Video model:", resolvedVideoModel);
+
 await supabase
   .from("orders")
   .update({
@@ -1257,10 +1353,10 @@ if (!order.bot_prepare_message_sent) {
       throw new Error(`Order has no original photo URLs: ${order.id}`);
     }
 
-    enhancedPhotoUrl = await generateNanoBananaImage(
-      photoUrls,
+    enhancedPhotoUrl = await createPhotoGeneration(
+      resolvedPhotoModel,
       template.photo_prompt,
-      template.aspect_ratio
+      photoUrls
     );
     console.log("Enhanced photo:", enhancedPhotoUrl);
 
@@ -1276,7 +1372,19 @@ if (!order.bot_prepare_message_sent) {
     console.log("Using existing enhanced photo:", enhancedPhotoUrl);
   }
 
-  const videoUrl = await generateVideoWithRetries(enhancedPhotoUrl, template);
+  const videoUrl = await createVideoGeneration(
+    resolvedVideoModel,
+    template.video_prompt,
+    enhancedPhotoUrl,
+    videoDuration,
+    videoResolution,
+    videoAspectRatio,
+    {
+      imageMode: template.seedance_image_mode || "reference",
+      mode: getTemplateText(template.mode, "std"),
+      genre: getTemplateText(template.genre, "auto"),
+    }
+  );
   console.log("Video ready:", videoUrl);
 
   await supabase
