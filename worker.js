@@ -49,17 +49,18 @@ function sleep(ms) {
 }
 
 function getHiggsfieldCredentials() {
-  const apiKey = process.env.HIGGSFIELD_API_KEY;
+  const apiKeyId = process.env.HIGGSFIELD_API_KEY_ID;
+  const apiKeySecret = process.env.HIGGSFIELD_API_KEY_SECRET;
 
-  if (!apiKey) {
-    throw new Error("Missing HIGGSFIELD_API_KEY");
+  if (!apiKeyId) {
+    throw new Error("Missing HIGGSFIELD_API_KEY_ID");
   }
 
-  if (process.env.HIGGSFIELD_API_SECRET && !apiKey.includes(":")) {
-    return `${apiKey}:${process.env.HIGGSFIELD_API_SECRET}`;
+  if (!apiKeySecret) {
+    throw new Error("Missing HIGGSFIELD_API_KEY_SECRET");
   }
 
-  return apiKey;
+  return `${apiKeyId}:${apiKeySecret}`;
 }
 
 function getHiggsfieldUrl(pathname) {
