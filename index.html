@@ -197,11 +197,11 @@
     <section class="card">
       <label class="upload-box" for="photo">
         <div class="upload-icon">📸</div>
-        <div class="upload-title">Выбрать фото</div>
+        <div class="upload-title">Выберите одно или несколько фото</div>
         <div class="upload-text" id="fileName">JPG или PNG, портретное фото</div>
       </label>
 
-      <input id="photo" type="file" accept="image/*" />
+      <input id="photo" type="file" accept="image/*" multiple />
 
       <button class="primary-button" onclick="sendPhoto()">
         Создать видео
@@ -239,35 +239,42 @@ if (templateSlug === 'repeat') {
 console.log('Template slug:', templateSlug);
 
     async function sendPhoto() {
-      const file = document.getElementById('photo').files[0];
+      const files = Array.from(document.getElementById('photo').files || []);
       if (!telegramUserId) {
          alert('Открой приложение через Telegram, чтобы мы знали, кому отправить видео');
          return;
          }
          
 
-      if (!file) {
-        alert('Загрузи фото');
+      if (files.length === 0) {
+        alert('Выберите хотя бы одно фото');
         return;
       }
 
-      const fileName = Date.now() + "_" + file.name;
+      const uploadedUrls = [];
 
-      const { error: uploadError } = await supabaseClient
-        .storage
-        .from('media')
-        .upload(fileName, file);
+      for (const [index, file] of files.entries()) {
+        const safeName = file.name.replace(/[^\w.-]+/g, '_');
+        const fileName = `${Date.now()}_${index}_${safeName}`;
 
-      if (uploadError) {
-        alert('Ошибка загрузки фото');
-        console.error(uploadError);
-        return;
+        const { error: uploadError } = await supabaseClient
+          .storage
+          .from('media')
+          .upload(fileName, file);
+
+        if (uploadError) {
+          alert('Ошибка загрузки фото');
+          console.error(uploadError);
+          return;
+        }
+
+        const publicUrl = supabaseClient
+          .storage
+          .from('media')
+          .getPublicUrl(fileName).data.publicUrl;
+
+        uploadedUrls.push(publicUrl);
       }
-
-      const publicUrl = supabaseClient
-        .storage
-        .from('media')
-        .getPublicUrl(fileName).data.publicUrl;
 
       const { error } = await supabaseClient
         .from('orders')
@@ -275,7 +282,8 @@ console.log('Template slug:', templateSlug);
           {
             telegram_user_id: telegramUserId,
             template_slug: templateSlug,
-            original_photo_url: publicUrl,
+            original_photo_url: uploadedUrls[0],
+            original_photo_urls: uploadedUrls,
             status: 'photo_uploaded'
           }
         ]);
@@ -306,10 +314,12 @@ console.log('Template slug:', templateSlug);
 const fileName = document.getElementById('fileName');
 
 photoInput?.addEventListener('change', () => {
-  const file = photoInput.files?.[0];
+  const files = Array.from(photoInput.files || []);
 
-  if (file) {
-    fileName.textContent = file.name;
+  if (files.length === 1) {
+    fileName.textContent = files[0].name;
+  } else if (files.length > 1) {
+    fileName.textContent = `Выбрано фото: ${files.length}`;
   } else {
     fileName.textContent = 'JPG или PNG, портретное фото';
   }

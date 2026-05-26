@@ -1076,18 +1076,37 @@ async function checkTelegramUpdates() {
     console.error("Telegram updates error:", error.message);
   }
 }
-async function generateNanoBananaImage(imageUrl, photoPrompt, aspectRatio) {
+function getOrderPhotoUrls(order) {
+  const photoUrls = Array.isArray(order.original_photo_urls)
+    ? order.original_photo_urls
+    : [];
+  const normalizedPhotoUrls = photoUrls.filter(
+    (url) => typeof url === "string" && url.trim()
+  );
+
+  if (normalizedPhotoUrls.length > 0) {
+    return normalizedPhotoUrls;
+  }
+
+  if (typeof order.original_photo_url === "string" && order.original_photo_url) {
+    return [order.original_photo_url];
+  }
+
+  return [];
+}
+
+async function generateNanoBananaImage(imageUrls, photoPrompt, aspectRatio) {
+  const inputImages = imageUrls.map((imageUrl) => ({
+    type: "image_url",
+    image_url: imageUrl,
+  }));
+
   return runGenerationWithRetries(
     "Nano Banana",
     HIGGSFIELD_NANO_BANANA_MODEL_ID,
     {
       prompt: photoPrompt,
-      input_images: [
-        {
-          type: "image_url",
-          image_url: imageUrl,
-        },
-      ],
+      input_images: inputImages,
       aspect_ratio: aspectRatio || "9:16",
       resolution: "2k",
     }
@@ -1232,8 +1251,14 @@ if (!order.bot_prepare_message_sent) {
   let enhancedPhotoUrl = order.enhanced_photo_url;
 
   if (!enhancedPhotoUrl) {
+    const photoUrls = getOrderPhotoUrls(order);
+
+    if (photoUrls.length === 0) {
+      throw new Error(`Order has no original photo URLs: ${order.id}`);
+    }
+
     enhancedPhotoUrl = await generateNanoBananaImage(
-      order.original_photo_url,
+      photoUrls,
       template.photo_prompt,
       template.aspect_ratio
     );
