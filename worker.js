@@ -19,10 +19,12 @@ const HIGGSFIELD_API_BASE_URL =
   process.env.HIGGSFIELD_API_BASE_URL || "https://platform.higgsfield.ai";
 const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+const HIGGSFIELD_MODEL_LIST_PATH =
+  process.env.HIGGSFIELD_MODEL_LIST_PATH || "/agents/models";
 const DEFAULT_PHOTO_MODEL = "nano_banana";
 const DEFAULT_VIDEO_MODEL = "seedance_2";
 const PHOTO_MODELS = {
-  nano_banana: "nano_banana_2",
+  nano_banana: "nano_banana",
   nano_banana_2: "nano_banana_2",
   nano_banana_pro: "nano_banana_2",
   gpt_image_2: "gpt_image_2",
@@ -138,7 +140,22 @@ function extractHiggsfieldError(data) {
 }
 
 async function higgsfieldRequest(pathname, options = {}) {
-  const response = await fetch(getHiggsfieldUrl(pathname), {
+  const url = getHiggsfieldUrl(pathname);
+  const debug = options.debug || null;
+
+  if (debug) {
+    console.log("HIGGSFIELD BASE URL:", HIGGSFIELD_API_BASE_URL);
+
+    if (debug.photoModelId) {
+      console.log("HIGGSFIELD PHOTO MODEL ID:", debug.photoModelId);
+    }
+
+    if (debug.payload) {
+      console.log("HIGGSFIELD REQUEST:", JSON.stringify(debug.payload, null, 2));
+    }
+  }
+
+  const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
       Accept: "application/json",
@@ -150,9 +167,31 @@ async function higgsfieldRequest(pathname, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
-  const data = await readJsonResponse(response);
+  const text = await response.text();
+
+  if (debug) {
+    console.log("HIGGSFIELD RESPONSE STATUS:", response.status);
+  }
+
+  let data = {};
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      if (!response.ok) {
+        console.error("HIGGSFIELD RESPONSE STATUS:", response.status);
+        console.error("HIGGSFIELD RESPONSE BODY:", text);
+        throw new Error(`Higgsfield API ${response.status}: ${text}`);
+      }
+
+      throw new Error(`Higgsfield returned non-JSON response: ${text}`);
+    }
+  }
 
   if (!response.ok) {
+    console.error("HIGGSFIELD RESPONSE STATUS:", response.status);
+    console.error("HIGGSFIELD RESPONSE BODY:", text);
     const detail = extractHiggsfieldError(data);
     throw new Error(
       `Higgsfield API ${response.status}: ${detail || JSON.stringify(data)}`
@@ -205,6 +244,10 @@ async function createGeneration(modelId, payload) {
   const result = await higgsfieldRequest(modelId, {
     method: "POST",
     body: payload,
+    debug: {
+      photoModelId: modelId,
+      payload,
+    },
   });
 
   const generationId = extractGenerationId(result);
@@ -309,7 +352,11 @@ function resolvePhotoModel(model) {
   const resolvedModel = PHOTO_MODELS[normalizedModel];
 
   if (!resolvedModel) {
-    throw new Error(`Unsupported photo model: ${model}`);
+    throw new Error(
+      `Unknown Higgsfield photo model: ${model}. Available mappings: ${Object.keys(
+        PHOTO_MODELS
+      ).join(", ")}`
+    );
   }
 
   return resolvedModel;
@@ -1300,8 +1347,6 @@ async function createPhotoGeneration(model, prompt, photoUrls) {
     resolution: "2k",
   };
 
-  console.log("HIGGSFIELD REQUEST:", JSON.stringify(payload, null, 2));
-
   return runGenerationWithRetries(
     "Photo generation",
     model,
@@ -1427,6 +1472,52 @@ function buildVideoPayload(
     aspectRatio,
     options
   );
+}
+
+function extractHiggsfieldModelSummaries(data) {
+  const items = Array.isArray(data)
+    ? data
+    : data?.items || data?.models || data?.data || [];
+
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map((model) => ({
+      id:
+        model?.job_set_type ||
+        model?.id ||
+        model?.slug ||
+        model?.model_id ||
+        model?.name,
+      name:
+        model?.public_name ||
+        model?.display_name ||
+        model?.title ||
+        model?.name,
+    }))
+    .filter((model) => model.id || model.name);
+}
+
+async function debugListHiggsfieldModels() {
+  try {
+    console.log("HIGGSFIELD MODEL LIST PATH:", HIGGSFIELD_MODEL_LIST_PATH);
+
+    const data = await higgsfieldRequest(HIGGSFIELD_MODEL_LIST_PATH, {
+      method: "GET",
+      debug: {
+        payload: {
+          endpoint: HIGGSFIELD_MODEL_LIST_PATH,
+        },
+      },
+    });
+    const models = extractHiggsfieldModelSummaries(data);
+
+    console.log("HIGGSFIELD AVAILABLE MODELS:", JSON.stringify(models, null, 2));
+  } catch (error) {
+    console.error("HIGGSFIELD MODEL LIST FAILED:", error.message);
+  }
 }
 
 async function createVideoGeneration(
@@ -1967,6 +2058,11 @@ function startHttpServer() {
 
 async function startWorker() {
   console.log("Higgsfield worker started");
+
+  if (process.env.HIGGSFIELD_DEBUG_MODELS === "true") {
+    await debugListHiggsfieldModels();
+  }
+
   startHttpServer();
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
