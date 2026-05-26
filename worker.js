@@ -14,63 +14,16 @@ const supabase = createClient(
 );
 
 const CHECK_INTERVAL_MS = 15000;
-const VIDEO_GENERATION_MAX_ATTEMPTS = 3;
+const GENERATION_MAX_ATTEMPTS = 3;
+const HIGGSFIELD_API_BASE_URL =
+  process.env.HIGGSFIELD_API_BASE_URL || "https://platform.higgsfield.ai";
+const HIGGSFIELD_NANO_BANANA_MODEL_ID =
+  process.env.HIGGSFIELD_NANO_BANANA_MODEL_ID || "nano_banana_2";
+const HIGGSFIELD_SEEDANCE_MODEL_ID =
+  process.env.HIGGSFIELD_SEEDANCE_MODEL_ID || "seedance_2_0";
+const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
+const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 let telegramUpdateOffset = 0;
-
-async function setupHiggsfieldCredentials() {
-  if (!process.env.HIGGSFIELD_CREDENTIALS_B64) {
-    console.log("No HIGGSFIELD_CREDENTIALS_B64 found");
-    return;
-  }
-
-  const configDir = path.join(os.homedir(), ".config", "higgsfield");
-  const credentialsPath = path.join(configDir, "credentials.json");
-
-  await fs.mkdir(configDir, { recursive: true });
-
-  const credentialsJson = Buffer.from(
-    process.env.HIGGSFIELD_CREDENTIALS_B64,
-    "base64"
-  ).toString("utf8");
-
-  await fs.writeFile(credentialsPath, credentialsJson);
-
-  const exists = await fs.stat(credentialsPath);
-  console.log("Higgsfield credentials path:", credentialsPath);
-  console.log("Higgsfield credentials size:", exists.size);
-  console.log("Higgsfield credentials file created");
-}
-
-function runHiggsfield(args) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "npm",
-      ["exec", "-y", "--package=@higgsfield/cli", "--", "higgsfield", ...args],
-      {
-        env: {
-          ...process.env,
-          HIGGSFIELD_TOKEN: process.env.HIGGSFIELD_TOKEN,
-          HIGGSFIELD_CLI_CACHE: "/tmp/higgsfield-cache",
-        },
-        maxBuffer: 1024 * 1024 * 50,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          console.error("Higgsfield error:", stderr || error.message);
-          reject(new Error(stderr || error.message));
-          return;
-        }
-
-        try {
-          resolve(JSON.parse(stdout));
-        } catch (parseError) {
-          console.log("Raw Higgsfield output:", stdout);
-          reject(parseError);
-        }
-      }
-    );
-  });
-}
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
@@ -91,6 +44,239 @@ function runCommand(command, args) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getHiggsfieldCredentials() {
+  const apiKey = process.env.HIGGSFIELD_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing HIGGSFIELD_API_KEY");
+  }
+
+  if (process.env.HIGGSFIELD_API_SECRET && !apiKey.includes(":")) {
+    return `${apiKey}:${process.env.HIGGSFIELD_API_SECRET}`;
+  }
+
+  return apiKey;
+}
+
+function getHiggsfieldUrl(pathname) {
+  const baseUrl = HIGGSFIELD_API_BASE_URL.endsWith("/")
+    ? HIGGSFIELD_API_BASE_URL
+    : `${HIGGSFIELD_API_BASE_URL}/`;
+
+  return new URL(pathname.replace(/^\/+/, ""), baseUrl).toString();
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Higgsfield returned non-JSON response: ${text}`);
+  }
+}
+
+function extractHiggsfieldError(data) {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  if (typeof data.detail === "string") {
+    return data.detail;
+  }
+
+  if (typeof data.message === "string") {
+    return data.message;
+  }
+
+  if (typeof data.error === "string") {
+    return data.error;
+  }
+
+  if (Array.isArray(data.detail)) {
+    return data.detail
+      .map((item) => item?.msg || item?.message || JSON.stringify(item))
+      .join("; ");
+  }
+
+  if (typeof data.data?.detail === "string") {
+    return data.data.detail;
+  }
+
+  if (typeof data.data?.message === "string") {
+    return data.data.message;
+  }
+
+  if (typeof data.data?.error === "string") {
+    return data.data.error;
+  }
+
+  return null;
+}
+
+async function higgsfieldRequest(pathname, options = {}) {
+  const response = await fetch(getHiggsfieldUrl(pathname), {
+    method: options.method || "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Key ${getHiggsfieldCredentials()}`,
+      "Content-Type": "application/json",
+      "User-Agent": "tg-miniapp-higgsfield-api/1.0",
+      ...options.headers,
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const data = await readJsonResponse(response);
+
+  if (!response.ok) {
+    const detail = extractHiggsfieldError(data);
+    throw new Error(
+      `Higgsfield API ${response.status}: ${detail || JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
+
+function extractGenerationId(result) {
+  return (
+    result?.request_id ||
+    result?.generation_id ||
+    result?.job_id ||
+    result?.id ||
+    result?.data?.request_id ||
+    result?.data?.generation_id ||
+    result?.data?.job_id ||
+    result?.data?.id
+  );
+}
+
+function extractResultUrl(result) {
+  return (
+    result?.result_url ||
+    result?.video_url ||
+    result?.image_url ||
+    result?.url ||
+    result?.output_url ||
+    result?.video?.url ||
+    result?.images?.[0]?.url ||
+    result?.result?.url ||
+    result?.result?.video_url ||
+    result?.result?.image_url ||
+    result?.results?.[0]?.url ||
+    result?.jobs?.[0]?.results?.raw?.url ||
+    result?.data?.result_url ||
+    result?.data?.video_url ||
+    result?.data?.image_url ||
+    result?.data?.video?.url ||
+    result?.data?.images?.[0]?.url ||
+    result?.data?.result?.url ||
+    result?.data?.result?.video_url ||
+    result?.data?.result?.image_url ||
+    result?.data?.results?.[0]?.url
+  );
+}
+
+async function createGeneration(modelId, payload) {
+  const result = await higgsfieldRequest(modelId, {
+    method: "POST",
+    body: payload,
+  });
+
+  const generationId = extractGenerationId(result);
+
+  if (!generationId) {
+    throw new Error("Higgsfield createGeneration did not return generation_id");
+  }
+
+  console.log("generation_id", generationId);
+
+  return generationId;
+}
+
+async function pollGeneration(generationId) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < HIGGSFIELD_POLL_TIMEOUT_MS) {
+    const result = await higgsfieldRequest(
+      `/requests/${encodeURIComponent(generationId)}/status`
+    );
+    const status = result?.status || result?.data?.status;
+
+    console.log("polling status", {
+      generation_id: generationId,
+      status,
+    });
+
+    if (status === "completed" || status === "succeeded") {
+      const resultUrl = extractResultUrl(result);
+
+      if (!resultUrl) {
+        throw new Error(
+          `Higgsfield generation completed but result_url is missing: ${generationId}`
+        );
+      }
+
+      console.log("result_url", resultUrl);
+
+      return resultUrl;
+    }
+
+    if (
+      status === "failed" ||
+      status === "error" ||
+      status === "nsfw" ||
+      status === "canceled" ||
+      status === "cancelled"
+    ) {
+      const detail = extractHiggsfieldError(result);
+      throw new Error(
+        `Higgsfield generation ${generationId} failed with status ${status}${
+          detail ? `: ${detail}` : ""
+        }`
+      );
+    }
+
+    await sleep(HIGGSFIELD_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Higgsfield polling timeout: ${generationId}`);
+}
+
+async function runGenerationWithRetries(label, modelId, payload) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= GENERATION_MAX_ATTEMPTS; attempt++) {
+    try {
+      console.log(`${label} attempt ${attempt}/${GENERATION_MAX_ATTEMPTS}`);
+
+      const generationId = await createGeneration(modelId, payload);
+      return await pollGeneration(generationId);
+    } catch (error) {
+      lastError = error;
+      console.error(`${label} attempt ${attempt} failed:`, error.message);
+
+      if (attempt < GENERATION_MAX_ATTEMPTS) {
+        console.log(`Retrying ${label} in 15 seconds...`);
+        await sleep(15000);
+      }
+    }
+  }
+
+  throw new Error(
+    `${label} failed after ${GENERATION_MAX_ATTEMPTS} attempts: ${lastError?.message}`
+  );
+}
+
 async function downloadFile(url, filename) {
   const response = await fetch(url);
 
@@ -104,21 +290,6 @@ async function downloadFile(url, filename) {
   await fs.writeFile(filePath, buffer);
 
   return filePath;
-}
-
-async function uploadToHiggsfield(filePath) {
-  const result = await runHiggsfield([
-    "upload",
-    "create",
-    filePath,
-    "--json",
-  ]);
-
-  if (!result.id) {
-    throw new Error("Higgsfield upload did not return id");
-  }
-
-  return result;
 }
 
 async function uploadPreviewToSupabase(previewPath, orderId) {
@@ -904,147 +1075,66 @@ async function checkTelegramUpdates() {
     console.error("Telegram updates error:", error.message);
   }
 }
-async function createNanoBananaJob(uploadId, photoPrompt, aspectRatio) {
-  const result = await runHiggsfield([
-    "generate",
-    "create",
-    "nano_banana_2",
-    "--prompt",
-    photoPrompt,
-    "--input_images",
-    JSON.stringify([
-      {
-        id: uploadId,
-        type: "media_input",
-      },
-    ]),
-    "--aspect_ratio",
-    aspectRatio || "9:16",
-    "--resolution",
-    "2k",
-    "--json",
-  ]);
-
-  return Array.isArray(result) ? result[0] : result.id;
+async function generateNanoBananaImage(imageUrl, photoPrompt, aspectRatio) {
+  return runGenerationWithRetries(
+    "Nano Banana",
+    HIGGSFIELD_NANO_BANANA_MODEL_ID,
+    {
+      prompt: photoPrompt,
+      input_images: [
+        {
+          type: "image_url",
+          image_url: imageUrl,
+        },
+      ],
+      aspect_ratio: aspectRatio || "9:16",
+      resolution: "2k",
+    }
+  );
 }
 
-async function createSeedanceJob(uploadId, template) {
+function buildSeedancePayload(imageUrl, template) {
   const imageMode = template.seedance_image_mode || "reference";
-
-  let imageArgs;
+  const payload = {
+    prompt: template.video_prompt,
+    aspect_ratio: template.aspect_ratio || "16:9",
+    duration: template.duration || 5,
+    resolution: template.resolution || "720p",
+    mode: template.mode || "std",
+    genre: template.genre || "auto",
+  };
 
   if (imageMode === "start_frame") {
     console.log("Seedance image mode: start_frame");
 
-    imageArgs = [
-      "--image",
-      uploadId,
-    ];
+    payload.image_url = imageUrl;
   } else {
     console.log("Seedance image mode: reference");
 
-    imageArgs = [
-      "--medias",
-      JSON.stringify([
-        {
-          data: {
-            id: uploadId,
-            type: "media_input",
-          },
-          role: "image",
+    payload.medias = [
+      {
+        data: {
+          type: "image_url",
+          image_url: imageUrl,
         },
-      ]),
+        role: "image",
+      },
     ];
   }
 
-  const result = await runHiggsfield([
-    "generate",
-    "create",
-    "seedance_2_0",
-    "--prompt",
-    template.video_prompt,
-    ...imageArgs,
-    "--aspect_ratio",
-    template.aspect_ratio || "16:9",
-    "--duration",
-    String(template.duration || 5),
-    "--resolution",
-    template.resolution || "720p",
-    "--mode",
-    template.mode || "std",
-    "--genre",
-    template.genre || "auto",
-    "--json",
-  ]);
-
-  return Array.isArray(result) ? result[0] : result.id;
+  return payload;
 }
 
-async function waitForJob(jobId) {
-  console.log("Waiting for job:", jobId);
-
-  const result = await runHiggsfield([
-    "generate",
-    "wait",
-    jobId,
-    "--timeout",
-    "30m",
-    "--interval",
-    "10s",
-    "--quiet",
-    "--json",
-  ]);
-
-  const job = Array.isArray(result) ? result[0] : result;
-
-  console.log("Wait result:", job);
-
-  if (!job) {
-    throw new Error(`No job result returned: ${jobId}`);
-  }
-
-  if (job.status === "failed" || job.status === "error") {
-    throw new Error(`Higgsfield job failed: ${jobId}`);
-  }
-
-  if (!job.result_url) {
-    throw new Error(`Job finished but result_url is missing: ${jobId}`);
-  }
-
-  return job.result_url;
-}
-
-async function generateVideoWithRetries(uploadId, template) {
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= VIDEO_GENERATION_MAX_ATTEMPTS; attempt++) {
-    try {
-      console.log(
-        `Seedance attempt ${attempt}/${VIDEO_GENERATION_MAX_ATTEMPTS}`
-      );
-
-      const seedanceJobId = await createSeedanceJob(uploadId, template);
-      console.log("Seedance job:", seedanceJobId);
-
-      const videoUrl = await waitForJob(seedanceJobId);
-      console.log("Seedance video ready:", videoUrl);
-
-      return videoUrl;
-    } catch (error) {
-      lastError = error;
-
-      console.error(`Seedance attempt ${attempt} failed:`, error.message);
-
-      if (attempt < VIDEO_GENERATION_MAX_ATTEMPTS) {
-        console.log("Retrying Seedance in 15 seconds...");
-        await new Promise((resolve) => setTimeout(resolve, 15000));
-      }
-    }
-  }
-
-  throw new Error(
-    `Seedance failed after ${VIDEO_GENERATION_MAX_ATTEMPTS} attempts: ${lastError?.message}`
+async function generateSeedanceVideo(imageUrl, template) {
+  return runGenerationWithRetries(
+    "Seedance",
+    HIGGSFIELD_SEEDANCE_MODEL_ID,
+    buildSeedancePayload(imageUrl, template)
   );
+}
+
+async function generateVideoWithRetries(imageUrl, template) {
+  return generateSeedanceVideo(imageUrl, template);
 }
 
 async function processOrder(order) {
@@ -1138,44 +1228,38 @@ if (!order.bot_prepare_message_sent) {
       .eq("id", order.id);
   }
 }
-  const originalFilePath = await downloadFile(
-    order.original_photo_url,
-    `original-${order.id}.jpg`
-  );
+  let enhancedPhotoUrl = order.enhanced_photo_url;
 
-  const originalUpload = await uploadToHiggsfield(originalFilePath);
-  console.log("Original uploaded:", originalUpload.id);
+  if (!enhancedPhotoUrl) {
+    enhancedPhotoUrl = await generateNanoBananaImage(
+      order.original_photo_url,
+      template.photo_prompt,
+      template.aspect_ratio
+    );
+    console.log("Enhanced photo:", enhancedPhotoUrl);
 
-  const nanoJobId = await createNanoBananaJob(
-    originalUpload.id,
-    template.photo_prompt,
-    template.aspect_ratio
-  );
+    await supabase
+      .from("orders")
+      .update({
+        enhanced_photo_url: enhancedPhotoUrl,
+        status: "photo_ready",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  } else {
+    console.log("Using existing enhanced photo:", enhancedPhotoUrl);
+  }
 
-  console.log("Nano Banana job:", nanoJobId);
-
-  const enhancedPhotoUrl = await waitForJob(nanoJobId);
-  console.log("Enhanced photo:", enhancedPhotoUrl);
+  const videoUrl = await generateVideoWithRetries(enhancedPhotoUrl, template);
+  console.log("Video ready:", videoUrl);
 
   await supabase
     .from("orders")
     .update({
-      enhanced_photo_url: enhancedPhotoUrl,
-      status: "photo_ready",
+      video_url: videoUrl,
       updated_at: new Date().toISOString(),
     })
     .eq("id", order.id);
-
-  const enhancedFilePath = await downloadFile(
-    enhancedPhotoUrl,
-    `enhanced-${order.id}.png`
-  );
-
-  const enhancedUpload = await uploadToHiggsfield(enhancedFilePath);
-  console.log("Enhanced uploaded:", enhancedUpload.id);
-
-  const videoUrl = await generateVideoWithRetries(enhancedUpload.id, template);
-  console.log("Video ready:", videoUrl);
 
   const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
 
@@ -1496,8 +1580,6 @@ function startHttpServer() {
 }
 
 async function startWorker() {
-  await setupHiggsfieldCredentials();
-
   console.log("Higgsfield worker started");
   startHttpServer();
 
