@@ -1480,21 +1480,37 @@ function buildVideoPayload(
 
 async function debugListHiggsfieldModels() {
   for (const endpoint of HIGGSFIELD_MODEL_DEBUG_ENDPOINTS) {
+    const url = getHiggsfieldUrl(endpoint);
+
     try {
-      const response = await fetch(getHiggsfieldUrl(endpoint), {
-        method: "GET",
+      const response = await fetch(url, {
+        method: "POST",
         headers: {
           Accept: "application/json",
           Authorization: `Key ${getHiggsfieldCredentials()}`,
+          "Content-Type": "application/json",
           "User-Agent": "tg-miniapp-higgsfield-api/1.0",
         },
+        body: JSON.stringify({}),
       });
       const body = await response.text();
 
+      console.log("HIGGSFIELD MODELS DEBUG URL:", url);
       console.log("HIGGSFIELD MODELS DEBUG ENDPOINT:", endpoint);
       console.log("HIGGSFIELD MODELS DEBUG STATUS:", response.status);
-      console.log("HIGGSFIELD MODELS DEBUG BODY:", body);
+
+      if (response.status === 405) {
+        console.log(
+          "HIGGSFIELD MODELS DEBUG ALLOW:",
+          response.headers.get("allow") || ""
+        );
+      }
+
+      if (response.ok) {
+        console.log("HIGGSFIELD MODELS DEBUG BODY:", body);
+      }
     } catch (error) {
+      console.error("HIGGSFIELD MODELS DEBUG URL:", url);
       console.error("HIGGSFIELD MODELS DEBUG ENDPOINT:", endpoint);
       console.error("HIGGSFIELD MODELS DEBUG FAILED:", error.message);
     }
