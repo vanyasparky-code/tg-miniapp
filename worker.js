@@ -25,12 +25,14 @@ const PHOTO_MODEL_ALIASES = {
   nano_banana: "nano_banana_2",
   nano_banana_2: "nano_banana_2",
   nano_banana_pro: "nano_banana_pro",
+  gpt_image_2: "gpt_image_2",
 };
 const VIDEO_MODEL_ALIASES = {
   seedance_2: "seedance_2_0",
   seedance_2_0: "seedance_2_0",
   kling_3: "kling_3",
   kling_3_0: "kling_3_0",
+  kling_motion_control: "kling_motion_control",
   veo_3: "veo_3",
   wan_2_2: "wan_2_2",
   wan_2_5: "wan_2_5",
@@ -295,7 +297,11 @@ function normalizeTemplateModel(model, defaultModel) {
     return defaultModel;
   }
 
-  return model.trim().toLowerCase();
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_");
 }
 
 function resolvePhotoModel(model) {
