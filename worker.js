@@ -359,6 +359,55 @@ async function uploadPreviewToSupabase(previewPath, orderId) {
   return supabase.storage.from("media").getPublicUrl(storagePath).data.publicUrl;
 }
 
+async function uploadPreviewVideoToSupabase(previewPath, orderId) {
+  const previewBuffer = await fs.readFile(previewPath);
+  const storagePath = `previews/${orderId}.mp4`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("media")
+    .upload(storagePath, previewBuffer, {
+      contentType: "video/mp4",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Preview video upload failed: ${uploadError.message}`);
+  }
+
+  return supabase.storage.from("media").getPublicUrl(storagePath).data.publicUrl;
+}
+
+async function createBlurredVideoPreview(videoUrl, orderId) {
+  console.log("Creating blurred video preview for order:", orderId);
+
+  const videoPath = await downloadFile(videoUrl, `video-${orderId}.mp4`);
+  const previewPath = path.join(os.tmpdir(), `preview-${orderId}.mp4`);
+
+  await runCommand(ffmpegPath, [
+    "-y",
+    "-i",
+    videoPath,
+    "-vf",
+    "boxblur=18:1",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "fast",
+    "-crf",
+    "28",
+    "-an",
+    "-movflags",
+    "+faststart",
+    previewPath,
+  ]);
+
+  const previewUrl = await uploadPreviewVideoToSupabase(previewPath, orderId);
+
+  console.log("Blurred video preview ready:", previewUrl);
+
+  return previewUrl;
+}
+
 async function createBlurredPreview(videoUrl, orderId) {
   console.log("Creating blurred preview for order:", orderId);
 
@@ -388,6 +437,25 @@ async function createBlurredPreview(videoUrl, orderId) {
   console.log("Preview ready:", previewUrl);
 
   return previewUrl;
+}
+
+async function createPreviewMedia(videoUrl, orderId, existingPreviewImageUrl) {
+  try {
+    const previewVideoUrl = await createBlurredVideoPreview(videoUrl, orderId);
+
+    return {
+      previewVideoUrl,
+      previewImageUrl: existingPreviewImageUrl || null,
+    };
+  } catch (error) {
+    console.error("Blurred video preview failed:", error.message);
+  }
+
+  return {
+    previewVideoUrl: null,
+    previewImageUrl:
+      existingPreviewImageUrl || (await createBlurredPreview(videoUrl, orderId)),
+  };
 }
 async function sendTelegramErrorMessage(order) {
   if (!process.env.BOT_TOKEN) {
@@ -522,8 +590,39 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
     `Это заблюренное превью. Полное видео будет доступно после оплаты.\n\n` +
     `Стоимость: ${template.price_stars || 1} ⭐ или ${template.price_rub || 299} ₽`;
 
+  const replyMarkup = {
+    inline_keyboard: [
+      [
+        {
+          text: `Оплатить ${template.price_stars || 1} ⭐`,
+          callback_data: `pay:${order.id}`,
+        },
+      ],
+      [
+        {
+          text: `Оплатить ${template.price_rub || 299} ₽ картой / СБП`,
+          callback_data: `card:${order.id}`,
+        },
+      ],
+    ],
+  };
+  const previewVideoUrl = order.preview_video_url;
+  const telegramMethod = previewVideoUrl ? "sendVideo" : "sendPhoto";
+  const mediaPayload = previewVideoUrl
+    ? {
+        video: previewVideoUrl,
+        supports_streaming: true,
+      }
+    : {
+        photo: previewImageUrl,
+      };
+
+  if (!previewVideoUrl && !previewImageUrl) {
+    throw new Error(`Order has no preview media: ${order.id}`);
+  }
+
   const response = await fetch(
-    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`,
+    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/${telegramMethod}`,
     {
       method: "POST",
       headers: {
@@ -531,24 +630,9 @@ async function sendTelegramPreview(order, previewImageUrl, template) {
       },
       body: JSON.stringify({
         chat_id: order.telegram_user_id,
-        photo: previewImageUrl,
+        ...mediaPayload,
         caption,
-reply_markup: {
-  inline_keyboard: [
-    [
-      {
-        text: `Оплатить ${template.price_stars || 1} ⭐`,
-        callback_data: `pay:${order.id}`,
-      },
-    ],
-    [
-      {
-        text: `Оплатить ${template.price_rub || 299} ₽ картой / СБП`,
-        callback_data: `card:${order.id}`,
-      },
-    ],
-  ],
-},
+        reply_markup: replyMarkup,
       }),
     }
   );
@@ -556,7 +640,7 @@ reply_markup: {
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(`Telegram sendPhoto failed: ${JSON.stringify(data)}`);
+    throw new Error(`Telegram ${telegramMethod} failed: ${JSON.stringify(data)}`);
   }
 
   console.log("Telegram preview sent:", order.id);
@@ -1277,22 +1361,45 @@ async function processOrder(order) {
   if (order.status === "video_ready_locked" && order.video_url) {
   console.log("Recovering video_ready_locked order:", order.id);
 
+  let previewVideoUrl = order.preview_video_url;
   let previewImageUrl = order.preview_image_url;
 
-  if (!previewImageUrl) {
-    previewImageUrl = await createBlurredPreview(order.video_url, order.id);
+  if (!previewVideoUrl) {
+    const previewMedia = await createPreviewMedia(
+      order.video_url,
+      order.id,
+      previewImageUrl
+    );
+    previewVideoUrl = previewMedia.previewVideoUrl;
+    previewImageUrl = previewMedia.previewImageUrl;
+
+    const previewUpdate = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (previewVideoUrl) {
+      previewUpdate.preview_video_url = previewVideoUrl;
+    }
+
+    if (previewImageUrl) {
+      previewUpdate.preview_image_url = previewImageUrl;
+    }
 
     await supabase
       .from("orders")
-      .update({
-        preview_image_url: previewImageUrl,
-        updated_at: new Date().toISOString(),
-      })
+      .update(previewUpdate)
       .eq("id", order.id);
   }
 
   if (!order.bot_message_sent) {
-    const sent = await sendTelegramPreview(order, previewImageUrl, template);
+    const sent = await sendTelegramPreview(
+      {
+        ...order,
+        preview_video_url: previewVideoUrl,
+      },
+      previewImageUrl,
+      template
+    );
 
     if (sent) {
       await supabase
@@ -1401,26 +1508,44 @@ if (!order.bot_prepare_message_sent) {
     })
     .eq("id", order.id);
 
-  const previewImageUrl = await createBlurredPreview(videoUrl, order.id);
+  const { previewVideoUrl, previewImageUrl } = await createPreviewMedia(
+    videoUrl,
+    order.id,
+    null
+  );
 
-  await supabase
-    .from("orders")
-    .update({
-      video_url: videoUrl,
-      preview_image_url: previewImageUrl,
-      status: "video_ready_locked",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id);
+  const previewUpdate = {
+    video_url: videoUrl,
+    status: "video_ready_locked",
+    updated_at: new Date().toISOString(),
+  };
+
+  if (previewVideoUrl) {
+    previewUpdate.preview_video_url = previewVideoUrl;
+  }
+
+  if (previewImageUrl) {
+    previewUpdate.preview_image_url = previewImageUrl;
+  }
+
+  await supabase.from("orders").update(previewUpdate).eq("id", order.id);
 
   console.log("About to send Telegram preview:", {
     orderId: order.id,
     telegramUserId: order.telegram_user_id,
     hasBotToken: Boolean(process.env.BOT_TOKEN),
+    previewVideoUrl,
     previewImageUrl,
   });
 
-  const sent = await sendTelegramPreview(order, previewImageUrl, template);
+  const sent = await sendTelegramPreview(
+    {
+      ...order,
+      preview_video_url: previewVideoUrl,
+    },
+    previewImageUrl,
+    template
+  );
 
   if (sent) {
     await supabase
