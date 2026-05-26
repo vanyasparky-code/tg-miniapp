@@ -239,62 +239,78 @@ if (templateSlug === 'repeat') {
 console.log('Template slug:', templateSlug);
 
     async function sendPhoto() {
-      const files = Array.from(document.getElementById('photo').files || []);
-      if (!telegramUserId) {
-         alert('Открой приложение через Telegram, чтобы мы знали, кому отправить видео');
-         return;
-         }
-         
+      try {
+        const files = Array.from(document.getElementById('photo').files || []);
+        if (!telegramUserId) {
+           alert('Открой приложение через Telegram, чтобы мы знали, кому отправить видео');
+           return;
+           }
 
-      if (files.length === 0) {
-        alert('Выберите хотя бы одно фото');
-        return;
-      }
 
-      const uploadedUrls = [];
-
-      for (const [index, file] of files.entries()) {
-        const safeName = file.name.replace(/[^\w.-]+/g, '_');
-        const fileName = `${Date.now()}_${index}_${safeName}`;
-
-        const { error: uploadError } = await supabaseClient
-          .storage
-          .from('media')
-          .upload(fileName, file);
-
-        if (uploadError) {
-          alert('Ошибка загрузки фото');
-          console.error(uploadError);
+        if (files.length === 0) {
+          alert('Выберите хотя бы одно фото');
           return;
         }
 
-        const publicUrl = supabaseClient
-          .storage
-          .from('media')
-          .getPublicUrl(fileName).data.publicUrl;
+        const uploadedUrls = [];
 
-        uploadedUrls.push(publicUrl);
-      }
+        for (const [index, file] of files.entries()) {
+          const safeName = file.name.replace(/[^\w.-]+/g, '_');
+          const fileName = `${Date.now()}_${index}_${safeName}`;
 
-      const { error } = await supabaseClient
-        .from('orders')
-        .insert([
-          {
-            telegram_user_id: telegramUserId,
-            template_slug: templateSlug,
-            original_photo_url: uploadedUrls[0],
-            original_photo_urls: uploadedUrls,
-            status: 'photo_uploaded'
+          const { error: uploadError } = await supabaseClient
+            .storage
+            .from('media')
+            .upload(fileName, file);
+
+          if (uploadError) {
+            alert('Ошибка загрузки фото');
+            console.error(uploadError);
+            return;
           }
-        ]);
 
-      if (error) {
-        alert('Ошибка создания заказа');
-        console.error(error);
-        return;
-      }
+          const publicUrl = supabaseClient
+            .storage
+            .from('media')
+            .getPublicUrl(fileName).data.publicUrl;
 
-      tg.showPopup(
+          uploadedUrls.push(publicUrl);
+        }
+
+        const { error } = await supabaseClient
+          .from('orders')
+          .insert([
+            {
+              telegram_user_id: telegramUserId,
+              template_slug: templateSlug,
+              original_photo_url: uploadedUrls[0],
+              original_photo_urls: uploadedUrls,
+              status: 'photo_uploaded'
+            }
+          ]);
+
+        if (error) {
+
+          console.error("CREATE ORDER ERROR:", error)
+
+          let message =
+            error?.message ||
+            error?.details ||
+            JSON.stringify(error)
+
+          if (error?.hint) {
+            message += "\n\nHint: " + error.hint
+          }
+
+          alert(
+            "Ошибка создания заказа:\n\n" +
+            message
+          )
+
+          return
+        }
+
+        tg.showPopup(
   {
     title: "ПОВТОРИ ВИДЕО БОТ",
     message:
@@ -309,6 +325,21 @@ console.log('Template slug:', templateSlug);
     tg.close();
   }
 );
+      } catch (error) {
+
+        console.error(
+          "UNEXPECTED SEND PHOTO ERROR:",
+          error
+        )
+
+        alert(
+          "Неожиданная ошибка:\n\n" +
+          (
+            error?.message ||
+            JSON.stringify(error)
+          )
+        )
+      }
     }
     const photoInput = document.getElementById('photo');
 const fileName = document.getElementById('fileName');
