@@ -21,10 +21,10 @@ const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_PHOTO_MODEL = "nano_banana";
 const DEFAULT_VIDEO_MODEL = "seedance_2";
-const PHOTO_MODEL_ALIASES = {
+const PHOTO_MODELS = {
   nano_banana: "nano_banana_2",
   nano_banana_2: "nano_banana_2",
-  nano_banana_pro: "nano_banana_pro",
+  nano_banana_pro: "nano_banana_2",
   gpt_image_2: "gpt_image_2",
 };
 const VIDEO_MODEL_ALIASES = {
@@ -306,7 +306,7 @@ function normalizeTemplateModel(model, defaultModel) {
 
 function resolvePhotoModel(model) {
   const normalizedModel = normalizeTemplateModel(model, DEFAULT_PHOTO_MODEL);
-  const resolvedModel = PHOTO_MODEL_ALIASES[normalizedModel];
+  const resolvedModel = PHOTO_MODELS[normalizedModel];
 
   if (!resolvedModel) {
     throw new Error(`Unsupported photo model: ${model}`);
@@ -1293,16 +1293,19 @@ async function createPhotoGeneration(model, prompt, photoUrls) {
     type: "image_url",
     image_url: imageUrl,
   }));
+  const payload = {
+    prompt,
+    input_images: inputImages,
+    aspect_ratio: "9:16",
+    resolution: "2k",
+  };
+
+  console.log("HIGGSFIELD REQUEST:", JSON.stringify(payload, null, 2));
 
   return runGenerationWithRetries(
     "Photo generation",
     model,
-    {
-      prompt,
-      input_images: inputImages,
-      aspect_ratio: "9:16",
-      resolution: "2k",
-    }
+    payload
   );
 }
 
@@ -1547,6 +1550,7 @@ const videoDuration = getTemplateInteger(template.duration, 5);
 const videoResolution = getTemplateText(template.resolution, "720p");
 const videoAspectRatio = getTemplateText(template.aspect_ratio, "16:9");
 
+console.log("PHOTO MODEL RAW:", template.photo_model);
 console.log("Photo model:", resolvedPhotoModel);
 console.log("Video model:", resolvedVideoModel);
 
