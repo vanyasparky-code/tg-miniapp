@@ -19,8 +19,12 @@ const HIGGSFIELD_API_BASE_URL =
   process.env.HIGGSFIELD_API_BASE_URL || "https://platform.higgsfield.ai";
 const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
-const HIGGSFIELD_MODEL_LIST_PATH =
-  process.env.HIGGSFIELD_MODEL_LIST_PATH || "/agents/models";
+const HIGGSFIELD_MODEL_DEBUG_ENDPOINTS = [
+  "/agents/models",
+  "/v1/models",
+  "/models",
+  "/v1/endpoints",
+];
 const DEFAULT_PHOTO_MODEL = "nano_banana";
 const DEFAULT_VIDEO_MODEL = "seedance_2";
 const PHOTO_MODELS = {
@@ -1474,49 +1478,26 @@ function buildVideoPayload(
   );
 }
 
-function extractHiggsfieldModelSummaries(data) {
-  const items = Array.isArray(data)
-    ? data
-    : data?.items || data?.models || data?.data || [];
-
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items
-    .map((model) => ({
-      id:
-        model?.job_set_type ||
-        model?.id ||
-        model?.slug ||
-        model?.model_id ||
-        model?.name,
-      name:
-        model?.public_name ||
-        model?.display_name ||
-        model?.title ||
-        model?.name,
-    }))
-    .filter((model) => model.id || model.name);
-}
-
 async function debugListHiggsfieldModels() {
-  try {
-    console.log("HIGGSFIELD MODEL LIST PATH:", HIGGSFIELD_MODEL_LIST_PATH);
-
-    const data = await higgsfieldRequest(HIGGSFIELD_MODEL_LIST_PATH, {
-      method: "GET",
-      debug: {
-        payload: {
-          endpoint: HIGGSFIELD_MODEL_LIST_PATH,
+  for (const endpoint of HIGGSFIELD_MODEL_DEBUG_ENDPOINTS) {
+    try {
+      const response = await fetch(getHiggsfieldUrl(endpoint), {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Key ${getHiggsfieldCredentials()}`,
+          "User-Agent": "tg-miniapp-higgsfield-api/1.0",
         },
-      },
-    });
-    const models = extractHiggsfieldModelSummaries(data);
+      });
+      const body = await response.text();
 
-    console.log("HIGGSFIELD AVAILABLE MODELS:", JSON.stringify(models, null, 2));
-  } catch (error) {
-    console.error("HIGGSFIELD MODEL LIST FAILED:", error.message);
+      console.log("HIGGSFIELD MODELS DEBUG ENDPOINT:", endpoint);
+      console.log("HIGGSFIELD MODELS DEBUG STATUS:", response.status);
+      console.log("HIGGSFIELD MODELS DEBUG BODY:", body);
+    } catch (error) {
+      console.error("HIGGSFIELD MODELS DEBUG ENDPOINT:", endpoint);
+      console.error("HIGGSFIELD MODELS DEBUG FAILED:", error.message);
+    }
   }
 }
 
