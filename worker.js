@@ -15,8 +15,7 @@ const supabase = createClient(
 
 const CHECK_INTERVAL_MS = 15000;
 const GENERATION_MAX_ATTEMPTS = 3;
-const HIGGSFIELD_API_BASE_URL =
-  process.env.HIGGSFIELD_API_BASE_URL || "https://platform.higgsfield.ai";
+const HIGGSFIELD_API_BASE_URL = "https://api.higgsfield.ai";
 const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const HIGGSFIELD_MODEL_DEBUG_ENDPOINTS = [
@@ -25,19 +24,24 @@ const HIGGSFIELD_MODEL_DEBUG_ENDPOINTS = [
   "/models",
   "/v1/endpoints",
 ];
-const DEFAULT_PHOTO_MODEL = "nano_banana";
+const DEFAULT_PHOTO_MODEL = "grok_imagine_2";
 const DEFAULT_VIDEO_MODEL = "seedance_2";
 const PHOTO_MODELS = {
-  nano_banana: "nano_banana",
-  nano_banana_2: "nano_banana_2",
-  nano_banana_pro: "nano_banana_2",
+  grok: "xai/grok-imagine-image-2.0",
+  grok_imagine: "xai/grok-imagine-image-2.0",
+  grok_imagine_2: "xai/grok-imagine-image-2.0",
+  grok_imagine_2_0: "xai/grok-imagine-image-2.0",
+  "xai/grok_imagine_image_2.0": "xai/grok-imagine-image-2.0",
+  nano_banana: "xai/grok-imagine-image-2.0",
+  nano_banana_2: "xai/grok-imagine-image-2.0",
+  nano_banana_pro: "xai/grok-imagine-image-2.0",
   gpt_image_2: "gpt_image_2",
 };
 const VIDEO_MODEL_ALIASES = {
-  seedance_2: "seedance_2_0",
-  seedance_2_0: "seedance_2_0",
-  kling_3: "kling_3",
-  kling_3_0: "kling_3_0",
+  seedance_2: "bytedance/seedance-2.0",
+  seedance_2_0: "bytedance/seedance-2.0",
+  kling_3: "kling-video/v3.0/std/image-to-video",
+  kling_3_0: "kling-video/v3.0/std/image-to-video",
   kling_motion_control: "kling_motion_control",
   veo_3: "veo_3",
   wan_2_2: "wan_2_2",
@@ -262,15 +266,18 @@ async function createGeneration(modelId, payload) {
 
   console.log("generation_id", generationId);
 
-  return generationId;
+  return {
+    generationId,
+    statusUrl: result?.status_url || result?.data?.status_url || null,
+  };
 }
 
-async function pollGeneration(generationId) {
+async function pollGeneration(generationId, statusUrl = null) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < HIGGSFIELD_POLL_TIMEOUT_MS) {
     const result = await higgsfieldRequest(
-      `/requests/${encodeURIComponent(generationId)}/status`
+      statusUrl || `/requests/${encodeURIComponent(generationId)}/status`
     );
     const status = result?.status || result?.data?.status;
 
@@ -321,8 +328,11 @@ async function runGenerationWithRetries(label, modelId, payload) {
     try {
       console.log(`${label} attempt ${attempt}/${GENERATION_MAX_ATTEMPTS}`);
 
-      const generationId = await createGeneration(modelId, payload);
-      return await pollGeneration(generationId);
+      const generation = await createGeneration(modelId, payload);
+      return await pollGeneration(
+        generation.generationId,
+        generation.statusUrl
+      );
     } catch (error) {
       lastError = error;
       console.error(`${label} attempt ${attempt} failed:`, error.message);
@@ -1340,13 +1350,17 @@ function getModelSpecificVideoParams(params, excludedKeys = []) {
 }
 
 async function createPhotoGeneration(model, prompt, photoUrls) {
-  const inputImages = photoUrls.map((imageUrl) => ({
-    type: "image_url",
-    image_url: imageUrl,
-  }));
+  if (
+    model === "xai/grok-imagine-image-2.0" &&
+    photoUrls.length > 10
+  ) {
+    throw new Error("Grok Imagine 2.0 accepts at most 10 input photos");
+  }
+
   const payload = {
     prompt,
-    input_images: inputImages,
+    image_urls: photoUrls,
+    quality: "medium",
     aspect_ratio: "9:16",
     resolution: "2k",
   };
@@ -1358,28 +1372,6 @@ async function createPhotoGeneration(model, prompt, photoUrls) {
   );
 }
 
-function addVideoImageInput(payload, imageUrl, imageMode = "reference") {
-  if (imageMode === "start_frame") {
-    console.log("Video image mode: start_frame");
-
-    payload.image_url = imageUrl;
-  } else {
-    console.log("Video image mode: reference");
-
-    payload.medias = [
-      {
-        data: {
-          type: "image_url",
-          image_url: imageUrl,
-        },
-        role: "image",
-      },
-    ];
-  }
-
-  return payload;
-}
-
 function buildBaseVideoPayload(prompt, duration, resolution, aspectRatio) {
   return {
     prompt,
@@ -1389,7 +1381,19 @@ function buildBaseVideoPayload(prompt, duration, resolution, aspectRatio) {
   };
 }
 
-function buildSeedanceVideoPayload(
+function pickModelParams(params, keys) {
+  const selected = {};
+
+  for (const key of keys) {
+    if (params[key] !== null && params[key] !== undefined) {
+      selected[key] = params[key];
+    }
+  }
+
+  return selected;
+}
+
+function buildSeedanceVideoRequest(
   prompt,
   imageUrl,
   duration,
@@ -1398,30 +1402,76 @@ function buildSeedanceVideoPayload(
   options = {}
 ) {
   const videoParams = getTemplateObject(options.videoParams);
-  const hasVideoParams = hasTemplateParams(videoParams);
-  const payload = {
-    ...buildBaseVideoPayload(prompt, duration, resolution, aspectRatio),
-    ...getModelSpecificVideoParams(videoParams, [
-      "prompt",
-      "aspect_ratio",
-      "duration",
-      "resolution",
-      "image",
-      "image_url",
-      "medias",
-    ]),
-    mode: hasVideoParams
-      ? getTemplateText(videoParams.mode, "std")
-      : getTemplateText(options.legacyMode, "std"),
-    genre: hasVideoParams
-      ? getTemplateText(videoParams.genre, "auto")
-      : getTemplateText(options.legacyGenre, "auto"),
+  const commonPayload = {
+    prompt,
+    duration,
+    resolution,
+    generate_audio:
+      typeof videoParams.generate_audio === "boolean"
+        ? videoParams.generate_audio
+        : true,
   };
 
-  return addVideoImageInput(payload, imageUrl, options.imageMode);
+  if (options.imageMode === "start_frame") {
+    console.log("Video image mode: start_frame");
+
+    return {
+      model: "bytedance/seedance-2.0/image-to-video",
+      payload: {
+        ...commonPayload,
+        image_url: imageUrl,
+      },
+    };
+  }
+
+  console.log("Video image mode: reference");
+
+  return {
+    model: "bytedance/seedance-2.0/reference-to-video",
+    payload: {
+      ...commonPayload,
+      ...pickModelParams(videoParams, ["audio_urls", "video_urls"]),
+      image_urls: [imageUrl],
+      aspect_ratio: aspectRatio,
+    },
+  };
 }
 
-function buildGenericVideoPayload(
+function buildKlingVideoRequest(
+  model,
+  prompt,
+  imageUrl,
+  duration,
+  options = {}
+) {
+  const videoParams = getTemplateObject(options.videoParams);
+
+  return {
+    model,
+    payload: {
+      prompt,
+      duration,
+      image_url: imageUrl,
+      sound: getTemplateText(videoParams.sound, "on"),
+      cfg_scale:
+        typeof videoParams.cfg_scale === "number"
+          ? videoParams.cfg_scale
+          : 0.5,
+      multi_shots:
+        typeof videoParams.multi_shots === "boolean"
+          ? videoParams.multi_shots
+          : false,
+      ...pickModelParams(videoParams, [
+        "elements",
+        "multi_prompt",
+        "last_image_url",
+      ]),
+    },
+  };
+}
+
+function buildGenericVideoRequest(
+  model,
   prompt,
   imageUrl,
   duration,
@@ -1445,10 +1495,12 @@ function buildGenericVideoPayload(
     ]),
   };
 
-  return addVideoImageInput(payload, imageUrl, options.imageMode);
+  payload.image_url = imageUrl;
+
+  return { model, payload };
 }
 
-function buildVideoPayload(
+function buildVideoRequest(
   model,
   prompt,
   imageUrl,
@@ -1457,8 +1509,8 @@ function buildVideoPayload(
   aspectRatio,
   options = {}
 ) {
-  if (model === "seedance_2_0") {
-    return buildSeedanceVideoPayload(
+  if (model === "bytedance/seedance-2.0") {
+    return buildSeedanceVideoRequest(
       prompt,
       imageUrl,
       duration,
@@ -1468,7 +1520,18 @@ function buildVideoPayload(
     );
   }
 
-  return buildGenericVideoPayload(
+  if (model === "kling-video/v3.0/std/image-to-video") {
+    return buildKlingVideoRequest(
+      model,
+      prompt,
+      imageUrl,
+      duration,
+      options
+    );
+  }
+
+  return buildGenericVideoRequest(
+    model,
     prompt,
     imageUrl,
     duration,
@@ -1526,18 +1589,20 @@ async function createVideoGeneration(
   aspectRatio,
   options = {}
 ) {
+  const request = buildVideoRequest(
+    model,
+    prompt,
+    enhancedPhoto,
+    duration,
+    resolution,
+    aspectRatio,
+    options
+  );
+
   return runGenerationWithRetries(
     "Video generation",
-    model,
-    buildVideoPayload(
-      model,
-      prompt,
-      enhancedPhoto,
-      duration,
-      resolution,
-      aspectRatio,
-      options
-    )
+    request.model,
+    request.payload
   );
 }
 
