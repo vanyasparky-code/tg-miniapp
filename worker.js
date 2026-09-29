@@ -2029,21 +2029,28 @@ async function handleRobokassaResult(params) {
     throw new Error(`Paid Robokassa order has no video_url: ${order.id}`);
   }
 
-  if (!order.paid) {
-    const now = new Date().toISOString();
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
-        paid: true,
-        payment_method: "robokassa",
-        paid_at: now,
-        updated_at: now,
-      })
-      .eq("id", order.id);
+  if (order.paid) {
+    console.log("Robokassa duplicate callback ignored:", {
+      orderId: order.id,
+      invId,
+    });
 
-    if (updateError) {
-      throw new Error(`Robokassa order update failed: ${updateError.message}`);
-    }
+    return invId;
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      paid: true,
+      payment_method: "robokassa",
+      paid_at: now,
+      updated_at: now,
+    })
+    .eq("id", order.id);
+
+  if (updateError) {
+    throw new Error(`Robokassa order update failed: ${updateError.message}`);
   }
 
   await sendTelegramVideo(order.telegram_user_id, order.video_url);
