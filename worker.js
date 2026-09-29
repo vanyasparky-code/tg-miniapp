@@ -48,6 +48,7 @@ const VIDEO_MODEL_ALIASES = {
   wan_2_5: "wan_2_5",
 };
 let telegramUpdateOffset = 0;
+let isCheckingOrders = false;
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
@@ -1836,45 +1837,57 @@ if (!order.bot_prepare_message_sent) {
 }
 
 async function checkOrders() {
+  if (isCheckingOrders) {
+    console.log("Order check skipped: previous check is still running");
+    return;
+  }
+
+  isCheckingOrders = true;
   console.log("Checking orders...");
 
-const { data: orders, error } = await supabase
-  .from("orders")
-  .select("*")
-  .or(
-    "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null)"
-  )
-  .limit(1);
+  try {
+    const { data: orders, error } = await supabase
+      .from("orders")
+      .select("*")
+      .or(
+        "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null)"
+      )
+      .limit(1);
 
-  if (error) {
-    console.error("Supabase error:", error);
-    return;
-  }
-
-  if (!orders || orders.length === 0) {
-    console.log("No new orders");
-    return;
-  }
-
-  for (const order of orders) {
-    try {
-      await processOrder(order);
-    } catch (error) {
-      console.error("Order failed:", order.id, error.message);
-
-const errorSent = await sendTelegramErrorMessage(order);
-
-await supabase
-  .from("orders")
-  .update({
-    status: "failed",
-    error_message: error.message,
-    bot_error_message_sent: errorSent,
-    bot_error_message_sent_at: errorSent ? new Date().toISOString() : null,
-    updated_at: new Date().toISOString(),
-  })
-  .eq("id", order.id);
+    if (error) {
+      console.error("Supabase error:", error);
+      return;
     }
+
+    if (!orders || orders.length === 0) {
+      console.log("No new orders");
+      return;
+    }
+
+    for (const order of orders) {
+      try {
+        await processOrder(order);
+      } catch (error) {
+        console.error("Order failed:", order.id, error.message);
+
+        const errorSent = await sendTelegramErrorMessage(order);
+
+        await supabase
+          .from("orders")
+          .update({
+            status: "failed",
+            error_message: error.message,
+            bot_error_message_sent: errorSent,
+            bot_error_message_sent_at: errorSent
+              ? new Date().toISOString()
+              : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", order.id);
+      }
+    }
+  } finally {
+    isCheckingOrders = false;
   }
 }
 
