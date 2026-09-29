@@ -746,23 +746,36 @@ function getRobokassaConfig() {
   const merchantLogin = process.env.ROBOKASSA_MERCHANT_LOGIN;
   const password1 = process.env.ROBOKASSA_PASSWORD1;
   const password2 = process.env.ROBOKASSA_PASSWORD2;
+  const hashAlgorithm = String(
+    process.env.ROBOKASSA_HASH_ALGORITHM || "md5"
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "");
 
   if (!merchantLogin || !password1 || !password2) {
     throw new Error("Robokassa env vars are not configured");
+  }
+
+  if (!["md5", "sha1", "sha256", "sha384", "sha512"].includes(hashAlgorithm)) {
+    throw new Error(
+      `Unsupported ROBOKASSA_HASH_ALGORITHM: ${hashAlgorithm}`
+    );
   }
 
   return {
     merchantLogin,
     password1,
     password2,
+    hashAlgorithm,
     isTest: ["1", "true", "yes"].includes(
       String(process.env.ROBOKASSA_TEST || "").toLowerCase()
     ),
   };
 }
 
-function sha256Hex(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
+function robokassaHashHex(value, hashAlgorithm) {
+  return crypto.createHash(hashAlgorithm).update(value).digest("hex");
 }
 
 function formatRobokassaOutSum(priceRub) {
@@ -792,7 +805,8 @@ function getShpSignatureTail(params) {
 }
 
 function createRobokassaPaymentUrl(order) {
-  const { merchantLogin, password1, isTest } = getRobokassaConfig();
+  const { merchantLogin, password1, hashAlgorithm, isTest } =
+    getRobokassaConfig();
   const outSum = formatRobokassaOutSum(order.price_rub);
   const invId = createRobokassaInvoiceId(order.id);
   const shpParams = {
@@ -800,7 +814,7 @@ function createRobokassaPaymentUrl(order) {
   };
   const shpTail = getShpSignatureTail(shpParams);
   const signatureBase = `${merchantLogin}:${outSum}:${invId}:${password1}:${shpTail}`;
-  const signature = sha256Hex(signatureBase);
+  const signature = robokassaHashHex(signatureBase, hashAlgorithm);
   const paymentUrl = new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
 
   paymentUrl.searchParams.set("MerchantLogin", merchantLogin);
@@ -817,6 +831,13 @@ function createRobokassaPaymentUrl(order) {
   if (isTest) {
     paymentUrl.searchParams.set("IsTest", "1");
   }
+
+  console.log("Robokassa payment URL created:", {
+    orderId: order.id,
+    invId,
+    isTest,
+    hashAlgorithm,
+  });
 
   return paymentUrl.toString();
 }
@@ -1931,7 +1952,7 @@ function collectRobokassaShpParams(params) {
 }
 
 function assertRobokassaSignature(params) {
-  const { password2 } = getRobokassaConfig();
+  const { password2, hashAlgorithm } = getRobokassaConfig();
   const outSum = getRobokassaParam(params, ["OutSum", "out_sum"]);
   const invId = getRobokassaParam(params, ["InvId", "InvID", "InvoiceID"]);
   const signatureValue = getRobokassaParam(params, [
@@ -1950,7 +1971,10 @@ function assertRobokassaSignature(params) {
   const signatureBase = `${outSum}:${invId}:${password2}${
     shpTail ? `:${shpTail}` : ""
   }`;
-  const expectedSignature = sha256Hex(signatureBase);
+  const expectedSignature = robokassaHashHex(
+    signatureBase,
+    hashAlgorithm
+  );
 
   if (!timingSafeSignatureEqual(signatureValue, expectedSignature)) {
     const error = new Error("Invalid Robokassa signature");
