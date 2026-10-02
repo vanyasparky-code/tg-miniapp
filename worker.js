@@ -60,7 +60,8 @@ const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
 const TOKEN_VALUE_RUB = 1;
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
-const SUPPORT_URL = process.env.SUPPORT_URL || "https://t.me/krsnov";
+const SUPPORT_URL =
+  process.env.SUPPORT_URL || "https://t.me/redaktop_support_bot";
 const CHANNEL_URL = "https://t.me/neuro_video_repeat";
 const BOT_WELCOME_IMAGE_URL = `${MINI_APP_URL}/assets/redaktop-logo.png`;
 const BOT_DESCRIPTION =
