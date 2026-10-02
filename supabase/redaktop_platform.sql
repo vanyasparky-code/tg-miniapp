@@ -21,11 +21,17 @@ create table if not exists public.token_payments (
   status text not null default 'pending' check (status in ('pending', 'paid', 'failed', 'cancelled')),
   robokassa_inv_id text unique,
   payment_url text,
+  privacy_accepted_at timestamptz,
+  offer_accepted_at timestamptz,
   paid_at timestamptz,
   provider_payload jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.token_payments
+  add column if not exists privacy_accepted_at timestamptz,
+  add column if not exists offer_accepted_at timestamptz;
 
 create table if not exists public.wallet_transactions (
   id uuid primary key default gen_random_uuid(),
@@ -66,6 +72,155 @@ create index if not exists wallet_transactions_user_created_idx
 
 create index if not exists generation_charges_user_created_idx
   on public.generation_charges(user_id, created_at desc);
+
+create or replace function public.reserve_order_tokens(
+  p_user_id uuid,
+  p_order_id uuid,
+  p_template_slug text,
+  p_tokens bigint
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_balance bigint;
+  transaction_inserted integer;
+begin
+  if p_order_id is null or p_tokens <= 0 then
+    raise exception 'Invalid order token reservation';
+  end if;
+
+  select balance_tokens
+    into current_balance
+    from public.app_users
+   where id = p_user_id
+   for update;
+
+  if not found then
+    raise exception 'Platform user not found: %', p_user_id;
+  end if;
+
+  if current_balance < p_tokens then
+    raise exception 'Insufficient token balance';
+  end if;
+
+  insert into public.wallet_transactions (
+    user_id,
+    amount_tokens,
+    kind,
+    reference_type,
+    reference_id,
+    idempotency_key,
+    metadata
+  ) values (
+    p_user_id,
+    -p_tokens,
+    'generation',
+    'order',
+    p_order_id::text,
+    'order:' || p_order_id::text,
+    jsonb_build_object(
+      'template_slug', p_template_slug,
+      'charged_tokens', p_tokens
+    )
+  )
+  on conflict (idempotency_key) do nothing;
+
+  get diagnostics transaction_inserted = row_count;
+
+  if transaction_inserted = 1 then
+    update public.app_users
+       set balance_tokens = balance_tokens - p_tokens,
+           updated_at = now()
+     where id = p_user_id
+     returning balance_tokens into current_balance;
+  end if;
+
+  return current_balance;
+end;
+$$;
+
+revoke all on function public.reserve_order_tokens(uuid, uuid, text, bigint)
+  from public, anon, authenticated;
+
+grant execute on function public.reserve_order_tokens(uuid, uuid, text, bigint)
+  to service_role;
+
+create or replace function public.refund_order_tokens(
+  p_order_id uuid,
+  p_reason text default 'generation_failed'
+)
+returns table (
+  new_balance bigint,
+  refunded boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  charge_record public.wallet_transactions%rowtype;
+  refund_inserted integer;
+begin
+  select *
+    into charge_record
+    from public.wallet_transactions
+   where idempotency_key = 'order:' || p_order_id::text
+     and kind = 'generation'
+   for update;
+
+  if not found then
+    return query select 0::bigint, false;
+    return;
+  end if;
+
+  insert into public.wallet_transactions (
+    user_id,
+    amount_tokens,
+    kind,
+    reference_type,
+    reference_id,
+    idempotency_key,
+    metadata
+  ) values (
+    charge_record.user_id,
+    abs(charge_record.amount_tokens),
+    'refund',
+    'order',
+    p_order_id::text,
+    'refund:order:' || p_order_id::text,
+    jsonb_build_object('reason', coalesce(p_reason, 'generation_failed'))
+  )
+  on conflict (idempotency_key) do nothing;
+
+  get diagnostics refund_inserted = row_count;
+
+  if refund_inserted = 1 then
+    update public.app_users
+       set balance_tokens = balance_tokens + abs(charge_record.amount_tokens),
+           updated_at = now()
+     where id = charge_record.user_id
+     returning balance_tokens into new_balance;
+
+    refunded := true;
+    return next;
+    return;
+  end if;
+
+  return query
+    select balance_tokens, false
+      from public.app_users
+     where id = charge_record.user_id;
+end;
+$$;
+
+revoke all on function public.refund_order_tokens(uuid, text)
+  from public, anon, authenticated;
+
+grant execute on function public.refund_order_tokens(uuid, text)
+  to service_role;
 
 alter table public.app_users enable row level security;
 alter table public.token_payments enable row level security;

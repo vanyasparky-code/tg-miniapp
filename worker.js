@@ -59,6 +59,17 @@ const TOKEN_PACKAGES = {
 const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
 const TOKEN_VALUE_RUB = 1;
+const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
+const SUPPORT_URL = process.env.SUPPORT_URL || "https://t.me/krsnov";
+const CHANNEL_URL = "https://t.me/neuro_video_repeat";
+const BOT_WELCOME_IMAGE_URL = `${MINI_APP_URL}/assets/redaktop-logo.png`;
+const BOT_DESCRIPTION =
+  "Что умеет этот бот?\n\n" +
+  "Создавайте уникальные видео с помощью топовых нейросетей.\n" +
+  "Повторяйте трендовые видео в один клик и получайте миллионы просмотров.\n" +
+  "Представлены уже готовые шаблоны - промты писать не нужно.\n" +
+  "Платите только за результат, остаток не сгорает.\n\n" +
+  'Нажмите "Открыть REDAKTOP".';
 let telegramUpdateOffset = 0;
 let isCheckingOrders = false;
 
@@ -772,6 +783,44 @@ async function telegramApi(method, payload) {
   return data.result;
 }
 
+async function configureTelegramBot() {
+  if (!process.env.BOT_TOKEN) {
+    return;
+  }
+
+  const setupCalls = [
+    telegramApi("setMyName", { name: "REDAKTOP" }),
+    telegramApi("setMyDescription", { description: BOT_DESCRIPTION }),
+    telegramApi("setMyShortDescription", {
+      short_description:
+        "AI-фото и видео: готовые шаблоны и свободная генерация.",
+    }),
+    telegramApi("setMyCommands", {
+      commands: [{ command: "start", description: "Открыть REDAKTOP" }],
+    }),
+    telegramApi("setChatMenuButton", {
+      menu_button: {
+        type: "web_app",
+        text: "Открыть REDAKTOP",
+        web_app: { url: MINI_APP_URL },
+      },
+    }),
+  ];
+
+  const results = await Promise.allSettled(setupCalls);
+  const failures = results.filter((result) => result.status === "rejected");
+
+  if (failures.length) {
+    console.error(
+      "Telegram bot presentation setup failed:",
+      failures.map((result) => result.reason?.message || String(result.reason))
+    );
+    return;
+  }
+
+  console.log("Telegram bot presentation configured");
+}
+
 async function answerCallbackQuery(callbackQueryId, text) {
   await telegramApi("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
@@ -998,7 +1047,7 @@ async function handleCardCallback(callbackQuery) {
 async function sendOfferConfirmationMessage(chatId, order) {
   const offerUrl =
     process.env.OFFER_URL ||
-    "https://telegra.ph/Oferta-servisa-Povtori-Video-Bot-05-13";
+    `${MINI_APP_URL}/offer.html`;
 
   await telegramApi("sendMessage", {
     chat_id: chatId,
@@ -1295,37 +1344,30 @@ async function handleStartMessage(message) {
     return;
   }
 
-  await telegramApi("sendMessage", {
+  await telegramApi("sendPhoto", {
     chat_id: chatId,
-    text:
-  "🎬 ПОВТОРИ ВИДЕО БОТ\n\n" +
-  "Создание AI-видео по вашим фотографиям с помощью нейросетей.\n\n" +
-  "👤 ИП: Краснов Иван Сергеевич\n" +
-  "🧾 ИНН: 212501999935\n\n" +
-  "📌 Услуга:\n" +
-  "Создание персонализированных AI-видео на основе загруженных пользователем фотографий.\n\n" +
-  "🌍 Регионы оказания услуг:\n" +
-  "Услуга предоставляется онлайн для пользователей из любых регионов.\n\n" +
-  "💳 Оплата:\n" +
-  "Оплата производится через Telegram Stars и банковские карты/СБП через Robokassa.\n\n" +
-  "↩️ Возврат:\n" +
-  "Если генерация видео не удалась по технической причине и результат не был предоставлен — возможен возврат средств.\n\n" +
-  "⏱ Срок оказания услуги:\n" +
-  "Обычно генерация занимает от 1 до 10 минут.\n\n" +
-  "📄 Оферта:\n" +
-  "https://telegra.ph/Oferta-servisa-Povtori-Video-Bot-05-13\n\n" +
-  "Нажмите кнопку ниже, чтобы загрузить фото и создать видео.",
+    photo: BOT_WELCOME_IMAGE_URL,
+    caption:
+      "<b>REDAKTOP</b> — нейросети в одном приложении\n\n" +
+      "Повторяй понравившиеся тренды\n" +
+      "Создавай видео с нуля, используя промт и референсы\n\n" +
+      "⚡ Идея → пара кликов → результат.",
+    parse_mode: "HTML",
     reply_markup: {
       inline_keyboard: [
         [
           {
-            text: "Открыть Mini App",
+            text: "Открыть REDAKTOP",
             web_app: {
-              url: `https://tg-miniapp-liart.vercel.app?template=${encodeURIComponent(
+              url: `${MINI_APP_URL}?template=${encodeURIComponent(
                 templateSlug
               )}`,
             },
           },
+        ],
+        [
+          { text: "Поддержка", url: SUPPORT_URL },
+          { text: "Канал", url: CHANNEL_URL },
         ],
       ],
     },
@@ -1708,8 +1750,54 @@ async function createVideoGeneration(
   );
 }
 
+async function refundOrderTokens(order, reason) {
+  if (!order?.paid) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("refund_order_tokens", {
+    p_order_id: order.id,
+    p_reason: String(reason || "generation_failed").slice(0, 500),
+  });
+
+  if (error) {
+    throw new Error(`Order token refund failed: ${error.message}`);
+  }
+
+  const result = Array.isArray(data) ? data[0] : data;
+  console.log("Order token refund:", {
+    orderId: order.id,
+    refunded: Boolean(result?.refunded),
+    balance: result?.new_balance,
+  });
+
+  return result;
+}
+
 async function processOrder(order) {
   console.log("Processing order:", order.id);
+
+  if (order.paid && order.status === "completed" && order.video_url) {
+    if (!order.bot_message_sent) {
+      try {
+        await sendTelegramVideo(order.telegram_user_id, order.video_url);
+        await supabase
+          .from("orders")
+          .update({
+            bot_message_sent: true,
+            bot_message_sent_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", order.id);
+      } catch (error) {
+        console.error("Paid video delivery retry failed:", order.id, error.message);
+      }
+    }
+
+    console.log("Recovered paid completed order:", order.id);
+    return;
+  }
+
   const subscribed = await isUserSubscribedToChannel(order.telegram_user_id);
 
   if (!subscribed) {
@@ -1719,6 +1807,10 @@ async function processOrder(order) {
       order.telegram_user_id,
       order.template_slug
     );
+
+    if (order.paid) {
+      await refundOrderTokens(order, "subscription_required");
+    }
 
     await supabase
       .from("orders")
@@ -1884,6 +1976,35 @@ if (!order.bot_prepare_message_sent) {
     })
     .eq("id", order.id);
 
+  if (order.paid) {
+    await supabase
+      .from("orders")
+      .update({
+        video_url: videoUrl,
+        status: "completed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+
+    try {
+      await sendTelegramVideo(order.telegram_user_id, videoUrl);
+
+      await supabase
+        .from("orders")
+        .update({
+          bot_message_sent: true,
+          bot_message_sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", order.id);
+    } catch (error) {
+      console.error("Paid video delivery failed:", order.id, error.message);
+    }
+
+    console.log("Paid order delivered without preview:", order.id);
+    return;
+  }
+
   const { previewVideoUrl, previewImageUrl } = await createPreviewMedia(
     videoUrl,
     order.id,
@@ -1951,7 +2072,7 @@ async function checkOrders() {
       .from("orders")
       .select("*")
       .or(
-        "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null)"
+        "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null),and(status.eq.completed,paid.eq.true,bot_message_sent.is.false),and(status.eq.completed,paid.eq.true,bot_message_sent.is.null)"
       )
       .limit(1);
 
@@ -1970,6 +2091,18 @@ async function checkOrders() {
         await processOrder(order);
       } catch (error) {
         console.error("Order failed:", order.id, error.message);
+
+        if (order.paid) {
+          try {
+            await refundOrderTokens(order, error.message);
+          } catch (refundError) {
+            console.error(
+              "Order token refund failed:",
+              order.id,
+              refundError.message
+            );
+          }
+        }
 
         const errorSent = await sendTelegramErrorMessage(order);
 
@@ -1992,9 +2125,11 @@ async function checkOrders() {
   }
 }
 
-function createHttpError(message, statusCode) {
+function createHttpError(message, statusCode, apiCode = null, details = null) {
   const error = new Error(message);
   error.statusCode = statusCode;
+  error.apiCode = apiCode;
+  error.details = details;
   return error;
 }
 
@@ -2092,7 +2227,14 @@ function getPublicTokenPackages() {
   }));
 }
 
-async function createTokenCheckout(initData, packageId) {
+async function createTokenCheckout(initData, packageId, legalAccepted) {
+  if (legalAccepted !== true) {
+    throw createHttpError(
+      "Подтвердите согласие с политикой конфиденциальности и публичной офертой",
+      400
+    );
+  }
+
   const telegramUser = verifyTelegramInitData(initData);
   const tokenPackage = TOKEN_PACKAGES[packageId];
 
@@ -2110,6 +2252,8 @@ async function createTokenCheckout(initData, packageId) {
       tokens: tokenPackage.tokens,
       amount_rub: tokenPackage.priceRub,
       status: "pending",
+      privacy_accepted_at: new Date().toISOString(),
+      offer_accepted_at: new Date().toISOString(),
     })
     .select("id, amount_rub, tokens, robokassa_inv_id")
     .single();
@@ -2578,6 +2722,146 @@ async function getPlatformAccount(initData) {
   };
 }
 
+function getTemplateTokenPrice(template) {
+  const priceTokens = Math.ceil(Number(template?.price_rub));
+
+  if (!Number.isFinite(priceTokens) || priceTokens <= 0) {
+    throw createHttpError(
+      `Для шаблона ${template?.slug || "unknown"} не настроена стоимость`,
+      500,
+      "TEMPLATE_PRICE_MISSING"
+    );
+  }
+
+  return priceTokens;
+}
+
+function normalizeUploadedPhotoUrls(photoUrls) {
+  const urls = Array.isArray(photoUrls) ? photoUrls : [];
+  const publicMediaPrefix = `${String(process.env.SUPABASE_URL || "").replace(
+    /\/$/,
+    ""
+  )}/storage/v1/object/public/media/`;
+
+  if (urls.length < 1 || urls.length > 10) {
+    throw createHttpError("Добавьте от 1 до 10 фотографий", 400, "INVALID_PHOTOS");
+  }
+
+  const normalizedUrls = urls.map((value) => String(value || "").trim());
+  const invalidUrl = normalizedUrls.find(
+    (value) => !value.startsWith(publicMediaPrefix)
+  );
+
+  if (invalidUrl) {
+    throw createHttpError(
+      "Фотографии должны быть загружены через REDAKTOP",
+      400,
+      "INVALID_PHOTO_URL"
+    );
+  }
+
+  return normalizedUrls;
+}
+
+async function createPaidPlatformOrder(initData, templateSlug, photoUrls) {
+  const telegramUser = verifyTelegramInitData(initData);
+  const user = await upsertPlatformUser(telegramUser);
+  const normalizedPhotoUrls = normalizeUploadedPhotoUrls(photoUrls);
+  const normalizedSlug = String(templateSlug || "").trim();
+  const { data: template, error: templateError } = await supabase
+    .from("templates")
+    .select("*")
+    .eq("slug", normalizedSlug)
+    .single();
+
+  if (templateError || !template) {
+    throw createHttpError("Шаблон не найден", 404, "TEMPLATE_NOT_FOUND");
+  }
+
+  const priceTokens = getTemplateTokenPrice(template);
+  const currentBalance = Number(user.balance_tokens || 0);
+
+  if (currentBalance < priceTokens) {
+    throw createHttpError(
+      `Недостаточно токенов: нужно ${priceTokens}, на балансе ${currentBalance}`,
+      402,
+      "INSUFFICIENT_BALANCE",
+      { balance_tokens: currentBalance, required_tokens: priceTokens }
+    );
+  }
+
+  const orderId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const { error: draftError } = await supabase.from("orders").insert({
+    id: orderId,
+    telegram_user_id: user.telegram_user_id,
+    template_slug: template.slug,
+    original_photo_url: normalizedPhotoUrls[0],
+    original_photo_urls: normalizedPhotoUrls,
+    status: "failed",
+    paid: false,
+    price_rub: priceTokens,
+    error_message: "Awaiting token reservation",
+    updated_at: now,
+  });
+
+  if (draftError) {
+    throw new Error(`Order draft creation failed: ${draftError.message}`);
+  }
+
+  const { data: reservationData, error: reservationError } = await supabase.rpc(
+    "reserve_order_tokens",
+    {
+      p_user_id: user.id,
+      p_order_id: orderId,
+      p_template_slug: template.slug,
+      p_tokens: priceTokens,
+    }
+  );
+
+  if (reservationError) {
+    await supabase.from("orders").delete().eq("id", orderId);
+
+    if (/insufficient token balance/i.test(reservationError.message || "")) {
+      throw createHttpError(
+        "Недостаточно токенов для создания",
+        402,
+        "INSUFFICIENT_BALANCE",
+        { balance_tokens: currentBalance, required_tokens: priceTokens }
+      );
+    }
+
+    throw new Error(`Token reservation failed: ${reservationError.message}`);
+  }
+
+  const newBalance = Number(reservationData);
+  const { error: activateError } = await supabase
+    .from("orders")
+    .update({
+      status: "photo_uploaded",
+      paid: true,
+      paid_at: now,
+      error_message: null,
+      updated_at: now,
+    })
+    .eq("id", orderId);
+
+  if (activateError) {
+    await supabase.rpc("refund_order_tokens", {
+      p_order_id: orderId,
+      p_reason: "order_activation_failed",
+    });
+    throw new Error(`Order activation failed: ${activateError.message}`);
+  }
+
+  return {
+    order_id: orderId,
+    status: "photo_uploaded",
+    charged_tokens: priceTokens,
+    balance_tokens: newBalance,
+  };
+}
+
 async function getPlatformHistory(initData) {
   const telegramUser = verifyTelegramInitData(initData);
   const telegramUserId = String(telegramUser.id);
@@ -2637,6 +2921,20 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       return true;
     }
 
+    if (requestUrl.pathname === "/api/orders" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      sendJsonResponse(
+        res,
+        201,
+        await createPaidPlatformOrder(
+          body.init_data,
+          body.template_slug,
+          body.photo_urls
+        )
+      );
+      return true;
+    }
+
     if (
       requestUrl.pathname === "/api/token-checkout" &&
       req.method === "POST"
@@ -2645,7 +2943,11 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       sendJsonResponse(
         res,
         200,
-        await createTokenCheckout(body.init_data, body.package_id)
+        await createTokenCheckout(
+          body.init_data,
+          body.package_id,
+          body.legal_accepted
+        )
       );
       return true;
     }
@@ -2655,6 +2957,8 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
     console.error("Platform API error:", error.message);
     sendJsonResponse(res, error.statusCode || 500, {
       error: error.message,
+      code: error.apiCode || undefined,
+      details: error.details || undefined,
     });
   }
 
@@ -2725,6 +3029,8 @@ async function startWorker() {
   }
 
   startHttpServer();
+
+  await configureTelegramBot();
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
   setInterval(checkTelegramUpdates, 3000);
