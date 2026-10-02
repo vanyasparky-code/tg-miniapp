@@ -47,8 +47,46 @@ const VIDEO_MODEL_ALIASES = {
   wan_2_2: "wan_2_2",
   wan_2_5: "wan_2_5",
 };
+const TOKEN_PACKAGES = {
+  "tokens-100": { id: "tokens-100", tokens: 100, priceRub: 106 },
+  "tokens-300": { id: "tokens-300", tokens: 300, priceRub: 306 },
+  "tokens-500": { id: "tokens-500", tokens: 500, priceRub: 496 },
+  "tokens-700": { id: "tokens-700", tokens: 700, priceRub: 686 },
+  "tokens-1000": { id: "tokens-1000", tokens: 1000, priceRub: 950 },
+  "tokens-2000": { id: "tokens-2000", tokens: 2000, priceRub: 1794 },
+  "tokens-5000": { id: "tokens-5000", tokens: 5000, priceRub: 4220 },
+};
+const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
+const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
+const TOKEN_VALUE_RUB = 1;
 let telegramUpdateOffset = 0;
 let isCheckingOrders = false;
+
+function calculateGenerationRetailPrice(providerCostUsd, usdRubRate) {
+  const costUsd = Number(providerCostUsd);
+  const rubRate = Number(usdRubRate);
+
+  if (!Number.isFinite(costUsd) || costUsd <= 0) {
+    throw new Error(`Invalid Higgsfield provider cost: ${providerCostUsd}`);
+  }
+
+  if (!Number.isFinite(rubRate) || rubRate <= 0) {
+    throw new Error(`Invalid USD/RUB rate: ${usdRubRate}`);
+  }
+
+  const providerCostRub = costUsd * rubRate;
+  const retailPriceRub = providerCostRub * HIGGSFIELD_RETAIL_MULTIPLIER;
+  const priceTokens = Math.ceil(retailPriceRub / TOKEN_VALUE_RUB);
+
+  return {
+    providerCostUsd: Number(costUsd.toFixed(6)),
+    providerCostRub: Number(providerCostRub.toFixed(2)),
+    usdRubRate: Number(rubRate.toFixed(4)),
+    multiplier: HIGGSFIELD_RETAIL_MULTIPLIER,
+    retailPriceRub: Number(retailPriceRub.toFixed(2)),
+    priceTokens,
+  };
+}
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
@@ -840,6 +878,48 @@ function createRobokassaPaymentUrl(order) {
   });
 
   return paymentUrl.toString();
+}
+
+function createRobokassaTokenPaymentUrl(payment) {
+  const { merchantLogin, password1, hashAlgorithm, isTest } =
+    getRobokassaConfig();
+  const outSum = formatRobokassaOutSum(payment.amount_rub);
+  const invId = payment.robokassa_inv_id || createRobokassaInvoiceId(payment.id);
+  const shpParams = {
+    Shp_paymentId: String(payment.id),
+    Shp_paymentType: "tokens",
+  };
+  const shpTail = getShpSignatureTail(shpParams);
+  const signatureBase = `${merchantLogin}:${outSum}:${invId}:${password1}:${shpTail}`;
+  const signature = robokassaHashHex(signatureBase, hashAlgorithm);
+  const paymentUrl = new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
+
+  paymentUrl.searchParams.set("MerchantLogin", merchantLogin);
+  paymentUrl.searchParams.set("OutSum", outSum);
+  paymentUrl.searchParams.set("InvId", invId);
+  paymentUrl.searchParams.set(
+    "Description",
+    `Redaktop ai: ${payment.tokens} токенов`
+  );
+  paymentUrl.searchParams.set("SignatureValue", signature);
+  paymentUrl.searchParams.set("Culture", "ru");
+
+  for (const [key, value] of Object.entries(shpParams)) {
+    paymentUrl.searchParams.set(key, value);
+  }
+
+  if (isTest) {
+    paymentUrl.searchParams.set("IsTest", "1");
+  }
+
+  console.log("Robokassa token payment URL created:", {
+    paymentId: payment.id,
+    tokens: payment.tokens,
+    invId,
+    isTest,
+  });
+
+  return { paymentUrl: paymentUrl.toString(), invId };
 }
 
 async function sendRobokassaPaymentLink(chatId, order) {
@@ -1912,6 +1992,156 @@ async function checkOrders() {
   }
 }
 
+function createHttpError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function verifyTelegramInitData(initData) {
+  if (typeof initData !== "string" || !initData) {
+    throw createHttpError("Missing Telegram init data", 401);
+  }
+
+  const botToken = process.env.BOT_TOKEN;
+
+  if (!botToken) {
+    throw new Error("Missing BOT_TOKEN");
+  }
+
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get("hash");
+
+  if (!receivedHash) {
+    throw createHttpError("Invalid Telegram init data", 401);
+  }
+
+  params.delete("hash");
+  const dataCheckString = [...params.entries()]
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secretKey = crypto
+    .createHmac("sha256", "WebAppData")
+    .update(botToken)
+    .digest();
+  const expectedHash = crypto
+    .createHmac("sha256", secretKey)
+    .update(dataCheckString)
+    .digest("hex");
+
+  if (!timingSafeSignatureEqual(receivedHash, expectedHash)) {
+    throw createHttpError("Invalid Telegram init data signature", 401);
+  }
+
+  const authDate = Number(params.get("auth_date"));
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  if (
+    !Number.isFinite(authDate) ||
+    authDate > nowSeconds + 60 ||
+    nowSeconds - authDate > TELEGRAM_INIT_DATA_MAX_AGE_SECONDS
+  ) {
+    throw createHttpError("Telegram session expired", 401);
+  }
+
+  let user;
+
+  try {
+    user = JSON.parse(params.get("user") || "null");
+  } catch (error) {
+    throw createHttpError("Invalid Telegram user data", 401);
+  }
+
+  if (!user?.id) {
+    throw createHttpError("Telegram user is missing", 401);
+  }
+
+  return user;
+}
+
+async function upsertPlatformUser(telegramUser) {
+  const telegramUserId = String(telegramUser.id);
+  const { data: user, error } = await supabase
+    .from("app_users")
+    .upsert(
+      {
+        telegram_user_id: telegramUserId,
+        username: telegramUser.username || null,
+        first_name: telegramUser.first_name || null,
+        last_name: telegramUser.last_name || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "telegram_user_id" }
+    )
+    .select("id, telegram_user_id, username, first_name, last_name, balance_tokens")
+    .single();
+
+  if (error || !user) {
+    throw new Error(`Platform user upsert failed: ${error?.message || "unknown"}`);
+  }
+
+  return user;
+}
+
+function getPublicTokenPackages() {
+  return Object.values(TOKEN_PACKAGES).map((tokenPackage) => ({
+    id: tokenPackage.id,
+    tokens: tokenPackage.tokens,
+    price_rub: tokenPackage.priceRub,
+  }));
+}
+
+async function createTokenCheckout(initData, packageId) {
+  const telegramUser = verifyTelegramInitData(initData);
+  const tokenPackage = TOKEN_PACKAGES[packageId];
+
+  if (!tokenPackage) {
+    throw createHttpError(`Unknown token package: ${packageId}`, 400);
+  }
+
+  const user = await upsertPlatformUser(telegramUser);
+  const { data: payment, error: paymentError } = await supabase
+    .from("token_payments")
+    .insert({
+      user_id: user.id,
+      telegram_user_id: user.telegram_user_id,
+      package_id: tokenPackage.id,
+      tokens: tokenPackage.tokens,
+      amount_rub: tokenPackage.priceRub,
+      status: "pending",
+    })
+    .select("id, amount_rub, tokens, robokassa_inv_id")
+    .single();
+
+  if (paymentError || !payment) {
+    throw new Error(
+      `Token payment creation failed: ${paymentError?.message || "unknown"}`
+    );
+  }
+
+  const checkout = createRobokassaTokenPaymentUrl(payment);
+  const { error: updateError } = await supabase
+    .from("token_payments")
+    .update({
+      robokassa_inv_id: checkout.invId,
+      payment_url: checkout.paymentUrl,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", payment.id);
+
+  if (updateError) {
+    throw new Error(`Token payment update failed: ${updateError.message}`);
+  }
+
+  return {
+    payment_id: payment.id,
+    payment_url: checkout.paymentUrl,
+    tokens: tokenPackage.tokens,
+    amount_rub: tokenPackage.priceRub,
+  };
+}
+
 function getRobokassaParam(params, names) {
   for (const name of names) {
     const value = params.get(name);
@@ -2001,8 +2231,124 @@ function assertRobokassaAmount(outSum, order) {
   }
 }
 
+function assertRobokassaTokenAmount(outSum, payment) {
+  const paidAmount = Number(outSum);
+  const expectedAmount = Number(formatRobokassaOutSum(payment.amount_rub));
+
+  if (
+    !Number.isFinite(paidAmount) ||
+    Math.abs(paidAmount - expectedAmount) > 0.01
+  ) {
+    const error = new Error(
+      `Robokassa amount mismatch for token payment ${payment.id}: ${outSum}`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function getRobokassaProviderPayload(params) {
+  const payload = {};
+
+  for (const [key, value] of params.entries()) {
+    if (key.toLowerCase() === "signaturevalue") {
+      continue;
+    }
+
+    payload[key] = value;
+  }
+
+  return payload;
+}
+
+async function handleRobokassaTokenResult(params, outSum, invId) {
+  const paymentId = getRobokassaParam(params, [
+    "Shp_paymentId",
+    "Shp_payment_id",
+  ]);
+
+  if (!paymentId) {
+    throw createHttpError("Missing Robokassa token payment id", 400);
+  }
+
+  const { data: payment, error } = await supabase
+    .from("token_payments")
+    .select(
+      "id, user_id, telegram_user_id, status, tokens, amount_rub, robokassa_inv_id"
+    )
+    .eq("id", paymentId)
+    .single();
+
+  if (error || !payment) {
+    throw createHttpError(
+      `Robokassa token payment not found: ${paymentId}`,
+      404
+    );
+  }
+
+  if (String(payment.robokassa_inv_id) !== String(invId)) {
+    throw createHttpError(
+      `Robokassa invoice mismatch for token payment ${payment.id}`,
+      400
+    );
+  }
+
+  assertRobokassaTokenAmount(outSum, payment);
+
+  const { data: completionRows, error: completionError } = await supabase.rpc(
+    "complete_token_payment",
+    {
+      p_payment_id: payment.id,
+      p_inv_id: String(invId),
+      p_provider_payload: getRobokassaProviderPayload(params),
+    }
+  );
+
+  if (completionError) {
+    throw new Error(
+      `Token balance update failed: ${completionError.message}`
+    );
+  }
+
+  const completion = Array.isArray(completionRows)
+    ? completionRows[0]
+    : completionRows;
+
+  if (!completion?.already_processed) {
+    try {
+      await sendTelegramMessage(
+        payment.telegram_user_id,
+        `✅ Баланс Redaktop ai пополнен на ${payment.tokens} токенов.\n\nТекущий баланс: ${completion?.new_balance || 0} токенов.`
+      );
+    } catch (notificationError) {
+      console.error(
+        "Token payment notification failed:",
+        notificationError.message
+      );
+    }
+  }
+
+  console.log("Robokassa token payment processed:", {
+    paymentId: payment.id,
+    tokens: payment.tokens,
+    invId,
+    alreadyProcessed: Boolean(completion?.already_processed),
+  });
+
+  return invId;
+}
+
 async function handleRobokassaResult(params) {
   const { outSum, invId } = assertRobokassaSignature(params);
+  const paymentType = getRobokassaParam(params, [
+    "Shp_paymentType",
+    "Shp_payment_type",
+  ]);
+
+  if (paymentType === "tokens") {
+    return handleRobokassaTokenResult(params, outSum, invId);
+  }
+
   const orderId = getRobokassaParam(params, ["Shp_orderId", "Shp_order_id"]);
 
   if (!orderId) {
@@ -2110,6 +2456,211 @@ function parseRequestParams(req, body) {
   return params;
 }
 
+function getAllowedFrontendOrigins() {
+  const configuredOrigins = String(
+    process.env.FRONTEND_ORIGINS || "https://tg-miniapp-liart.vercel.app"
+  )
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return new Set(configuredOrigins);
+}
+
+function isAllowedFrontendOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return true;
+  }
+
+  return getAllowedFrontendOrigins().has(origin);
+}
+
+function applyCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+
+  if (origin && isAllowedFrontendOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+function sendJsonResponse(res, statusCode, body) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
+}
+
+async function readJsonRequest(req) {
+  const body = await readRequestBody(req);
+
+  if (!body) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw createHttpError("Invalid JSON body", 400);
+  }
+}
+
+function sanitizeTemplateForCatalog(template) {
+  const allowedKeys = [
+    "slug",
+    "title",
+    "name",
+    "description",
+    "cover_url",
+    "preview_url",
+    "thumbnail_url",
+    "image_url",
+    "reference_url",
+    "photo_model",
+    "video_model",
+    "aspect_ratio",
+    "duration",
+    "resolution",
+    "price_rub",
+  ];
+  const publicTemplate = {};
+
+  for (const key of allowedKeys) {
+    if (template[key] !== undefined && template[key] !== null) {
+      publicTemplate[key] = template[key];
+    }
+  }
+
+  return publicTemplate;
+}
+
+async function getPlatformCatalog() {
+  const { data: templates, error } = await supabase
+    .from("templates")
+    .select("*")
+    .order("slug", { ascending: true });
+
+  if (error) {
+    throw new Error(`Template catalog failed: ${error.message}`);
+  }
+
+  return {
+    templates: (templates || []).map(sanitizeTemplateForCatalog),
+    token_packages: getPublicTokenPackages(),
+    pricing: {
+      currency: "RUB",
+      token_value_rub: TOKEN_VALUE_RUB,
+      higgsfield_cost_multiplier: HIGGSFIELD_RETAIL_MULTIPLIER,
+      rounding: "ceil_to_token",
+    },
+  };
+}
+
+async function getPlatformAccount(initData) {
+  const telegramUser = verifyTelegramInitData(initData);
+  const user = await upsertPlatformUser(telegramUser);
+
+  return {
+    user: {
+      id: user.id,
+      telegram_user_id: user.telegram_user_id,
+      username: user.username,
+      first_name: user.first_name,
+      last_name: user.last_name,
+    },
+    balance_tokens: Number(user.balance_tokens || 0),
+  };
+}
+
+async function getPlatformHistory(initData) {
+  const telegramUser = verifyTelegramInitData(initData);
+  const telegramUserId = String(telegramUser.id);
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select(
+      "id, created_at, template_slug, status, paid, price_rub, original_photo_url, preview_image_url, preview_video_url, video_url"
+    )
+    .eq("telegram_user_id", telegramUserId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    throw new Error(`Platform history failed: ${error.message}`);
+  }
+
+  return (orders || []).map((order) => ({
+    ...order,
+    video_url: order.paid ? order.video_url : null,
+  }));
+}
+
+async function handlePlatformApiRequest(req, res, requestUrl) {
+  if (!requestUrl.pathname.startsWith("/api/")) {
+    return false;
+  }
+
+  applyCorsHeaders(req, res);
+
+  if (!isAllowedFrontendOrigin(req.headers.origin)) {
+    sendJsonResponse(res, 403, { error: "Origin is not allowed" });
+    return true;
+  }
+
+  if (req.method === "OPTIONS") {
+    sendJsonResponse(res, 204, {});
+    return true;
+  }
+
+  try {
+    if (requestUrl.pathname === "/api/catalog" && req.method === "GET") {
+      sendJsonResponse(res, 200, await getPlatformCatalog());
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/account" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      sendJsonResponse(res, 200, await getPlatformAccount(body.init_data));
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/history" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      sendJsonResponse(res, 200, {
+        orders: await getPlatformHistory(body.init_data),
+      });
+      return true;
+    }
+
+    if (
+      requestUrl.pathname === "/api/token-checkout" &&
+      req.method === "POST"
+    ) {
+      const body = await readJsonRequest(req);
+      sendJsonResponse(
+        res,
+        200,
+        await createTokenCheckout(body.init_data, body.package_id)
+      );
+      return true;
+    }
+
+    sendJsonResponse(res, 404, { error: "API endpoint not found" });
+  } catch (error) {
+    console.error("Platform API error:", error.message);
+    sendJsonResponse(res, error.statusCode || 500, {
+      error: error.message,
+    });
+  }
+
+  return true;
+}
+
 function sendHttpResponse(res, statusCode, body) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -2118,6 +2669,10 @@ function sendHttpResponse(res, statusCode, body) {
 
 async function handleHttpRequest(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+  if (await handlePlatformApiRequest(req, res, requestUrl)) {
+    return;
+  }
 
   if (requestUrl.pathname === "/" || requestUrl.pathname === "/health") {
     sendHttpResponse(res, 200, "OK");
