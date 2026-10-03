@@ -6,6 +6,7 @@ const http = require("http");
 const os = require("os");
 const path = require("path");
 const ffmpegPath = require("ffmpeg-static");
+const ffprobePath = require("ffprobe-static").path;
 const sharp = require("sharp");
 
 const supabase = createClient(
@@ -18,6 +19,7 @@ const GENERATION_MAX_ATTEMPTS = 3;
 const HIGGSFIELD_API_BASE_URL = "https://api.higgsfield.ai";
 const HIGGSFIELD_POLL_INTERVAL_MS = 10000;
 const HIGGSFIELD_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+const GENJUTSU_POLL_TIMEOUT_MS = 30 * 60 * 1000;
 const HIGGSFIELD_MODEL_DEBUG_ENDPOINTS = [
   "/agents/models",
   "/v1/models",
@@ -58,7 +60,37 @@ const TOKEN_PACKAGES = {
 };
 const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
+const GENJUTSU_RETAIL_MULTIPLIER = 2;
 const TOKEN_VALUE_RUB = 1;
+const GENJUTSU_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+const GENJUTSU_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+const GENJUTSU_RATES_USD = Object.freeze({
+  "480p": 0.318,
+  "720p": 0.681,
+  "1080p": 1.632,
+});
+const GENJUTSU_MODELS = Object.freeze({
+  genjutsu_motion: {
+    label: "Genjutsu · Motion Transfer",
+    modelId: "higgsfield/genjutsu/motion-transfer/v1.0",
+    minImages: 1,
+    maxImages: 8,
+  },
+  genjutsu_object: {
+    label: "Genjutsu · Object Swap",
+    modelId: "higgsfield/genjutsu/object-swap/v1.0",
+    minImages: 1,
+    maxImages: 8,
+    minimumPixels: 409600,
+  },
+  genjutsu_restyle: {
+    label: "Genjutsu · Restyle",
+    modelId: "higgsfield/genjutsu/restyle/v1.0",
+    minImages: 0,
+    maxImages: 5,
+    requiresPreset: true,
+  },
+});
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
 const SUPPORT_URL =
   process.env.SUPPORT_URL || "https://t.me/redaktop_support_bot";
@@ -73,8 +105,15 @@ const BOT_DESCRIPTION =
   'Нажмите "Открыть REDAKTOP".';
 let telegramUpdateOffset = 0;
 let isCheckingOrders = false;
+let isCheckingCustomGenerations = false;
+let usdRubRateCache = null;
+let genjutsuPresetCache = null;
 
-function calculateGenerationRetailPrice(providerCostUsd, usdRubRate) {
+function calculateGenerationRetailPrice(
+  providerCostUsd,
+  usdRubRate,
+  multiplier = HIGGSFIELD_RETAIL_MULTIPLIER
+) {
   const costUsd = Number(providerCostUsd);
   const rubRate = Number(usdRubRate);
 
@@ -87,14 +126,20 @@ function calculateGenerationRetailPrice(providerCostUsd, usdRubRate) {
   }
 
   const providerCostRub = costUsd * rubRate;
-  const retailPriceRub = providerCostRub * HIGGSFIELD_RETAIL_MULTIPLIER;
+  const normalizedMultiplier = Number(multiplier);
+
+  if (!Number.isFinite(normalizedMultiplier) || normalizedMultiplier <= 0) {
+    throw new Error(`Invalid retail multiplier: ${multiplier}`);
+  }
+
+  const retailPriceRub = providerCostRub * normalizedMultiplier;
   const priceTokens = Math.ceil(retailPriceRub / TOKEN_VALUE_RUB);
 
   return {
     providerCostUsd: Number(costUsd.toFixed(6)),
     providerCostRub: Number(providerCostRub.toFixed(2)),
     usdRubRate: Number(rubRate.toFixed(4)),
-    multiplier: HIGGSFIELD_RETAIL_MULTIPLIER,
+    multiplier: normalizedMultiplier,
     retailPriceRub: Number(retailPriceRub.toFixed(2)),
     priceTokens,
   };
@@ -323,10 +368,14 @@ async function createGeneration(modelId, payload) {
   };
 }
 
-async function pollGeneration(generationId, statusUrl = null) {
+async function pollGeneration(
+  generationId,
+  statusUrl = null,
+  timeoutMs = HIGGSFIELD_POLL_TIMEOUT_MS
+) {
   const startedAt = Date.now();
 
-  while (Date.now() - startedAt < HIGGSFIELD_POLL_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     const result = await higgsfieldRequest(
       statusUrl || `/requests/${encodeURIComponent(generationId)}/status`
     );
@@ -2059,6 +2108,219 @@ if (!order.bot_prepare_message_sent) {
   console.log("Order completed:", order.id);
 }
 
+async function refundCustomGenerationTokens(generation, reason) {
+  const { data, error } = await supabase.rpc("refund_order_tokens", {
+    p_order_id: generation.id,
+    p_reason: String(reason || "custom_generation_failed").slice(0, 500),
+  });
+
+  if (error) {
+    throw new Error(`Custom generation refund failed: ${error.message}`);
+  }
+
+  return Array.isArray(data) ? data[0] : data;
+}
+
+function buildGenjutsuPayload(generation) {
+  const payload = {
+    video_url: generation.video_url,
+    resolution: generation.resolution,
+  };
+  const imageUrls = Array.isArray(generation.image_urls)
+    ? generation.image_urls
+    : [];
+
+  if (imageUrls.length) {
+    payload.image_urls = imageUrls;
+  }
+
+  if (generation.prompt) {
+    payload.prompt = generation.prompt;
+  }
+
+  if (generation.model_key === "genjutsu_restyle") {
+    payload.preset_id = generation.preset_id;
+  }
+
+  return payload;
+}
+
+async function processCustomGeneration(generation) {
+  if (generation.status === "completed" && generation.result_url) {
+    if (!generation.bot_message_sent) {
+      await sendTelegramVideo(generation.telegram_user_id, generation.result_url);
+      await supabase
+        .from("custom_generations")
+        .update({
+          bot_message_sent: true,
+          bot_message_sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", generation.id);
+    }
+    return;
+  }
+
+  const subscribed = await isUserSubscribedToChannel(
+    generation.telegram_user_id
+  );
+
+  if (!subscribed) {
+    await sendSubscriptionRequiredMessage(generation.telegram_user_id, "repeat");
+    await refundCustomGenerationTokens(generation, "subscription_required");
+    await supabase
+      .from("custom_generations")
+      .update({
+        status: "subscription_required",
+        error_message: "User is not subscribed to the channel",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", generation.id);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("custom_generations")
+    .update({ status: "processing", updated_at: now })
+    .eq("id", generation.id);
+
+  if (!generation.bot_prepare_message_sent) {
+    const sent = await sendTelegramPreparingMessage(generation);
+
+    if (sent) {
+      await supabase
+        .from("custom_generations")
+        .update({ bot_prepare_message_sent: true, updated_at: now })
+        .eq("id", generation.id);
+    }
+  }
+
+  let requestId = generation.provider_request_id;
+  let statusUrl = generation.provider_status_url;
+
+  if (!requestId) {
+    const request = await createGeneration(
+      generation.model_id,
+      buildGenjutsuPayload(generation)
+    );
+    requestId = request.generationId;
+    statusUrl = request.statusUrl;
+
+    const { error } = await supabase
+      .from("custom_generations")
+      .update({
+        provider_request_id: requestId,
+        provider_status_url: statusUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", generation.id);
+
+    if (error) {
+      throw new Error(`Failed to save Genjutsu request: ${error.message}`);
+    }
+  }
+
+  const resultUrl = await pollGeneration(
+    requestId,
+    statusUrl,
+    GENJUTSU_POLL_TIMEOUT_MS
+  );
+  const completedAt = new Date().toISOString();
+  const { error: completeError } = await supabase
+    .from("custom_generations")
+    .update({
+      status: "completed",
+      result_url: resultUrl,
+      error_message: null,
+      completed_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq("id", generation.id);
+
+  if (completeError) {
+    throw new Error(`Failed to save Genjutsu result: ${completeError.message}`);
+  }
+
+  try {
+    await sendTelegramVideo(generation.telegram_user_id, resultUrl);
+    await supabase
+      .from("custom_generations")
+      .update({
+        bot_message_sent: true,
+        bot_message_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", generation.id);
+  } catch (error) {
+    console.error("Genjutsu delivery failed:", generation.id, error.message);
+  }
+}
+
+async function checkCustomGenerations() {
+  if (isCheckingCustomGenerations) {
+    return;
+  }
+
+  isCheckingCustomGenerations = true;
+
+  try {
+    const { data, error } = await supabase
+      .from("custom_generations")
+      .select("*")
+      .or(
+        "status.in.(queued,processing),and(status.eq.completed,bot_message_sent.eq.false)"
+      )
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    if (error) {
+      console.error("Custom generation queue error:", error.message);
+      return;
+    }
+
+    for (const generation of data || []) {
+      try {
+        await processCustomGeneration(generation);
+      } catch (error) {
+        console.error("Custom generation failed:", generation.id, error.message);
+
+        if (String(error.message || error).includes("polling timeout")) {
+          await supabase
+            .from("custom_generations")
+            .update({
+              status: "processing",
+              error_message: "Generation is still processing",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", generation.id);
+          continue;
+        }
+
+        if (generation.status !== "completed") {
+          try {
+            await refundCustomGenerationTokens(generation, error.message);
+          } catch (refundError) {
+            console.error("Custom generation refund failed:", refundError.message);
+          }
+
+          await sendTelegramErrorMessage(generation);
+          await supabase
+            .from("custom_generations")
+            .update({
+              status: "failed",
+              error_message: String(error.message || error).slice(0, 2000),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", generation.id);
+        }
+      }
+    }
+  } finally {
+    isCheckingCustomGenerations = false;
+  }
+}
+
 async function checkOrders() {
   if (isCheckingOrders) {
     console.log("Order check skipped: previous check is still running");
@@ -2132,6 +2394,204 @@ function createHttpError(message, statusCode, apiCode = null, details = null) {
   error.apiCode = apiCode;
   error.details = details;
   return error;
+}
+
+function getPublicMediaPrefix() {
+  return `${String(process.env.SUPABASE_URL || "").replace(
+    /\/$/,
+    ""
+  )}/storage/v1/object/public/media/`;
+}
+
+function normalizeUploadedMediaUrl(value, label, telegramUserId) {
+  const normalized = String(value || "").trim();
+  const expectedPrefix = `${getPublicMediaPrefix()}uploads/${encodeURIComponent(
+    String(telegramUserId)
+  )}/`;
+
+  if (!normalized.startsWith(expectedPrefix)) {
+    throw createHttpError(
+      `${label} должен быть загружен через REDAKTOP`,
+      400,
+      "INVALID_MEDIA_URL"
+    );
+  }
+
+  return normalized;
+}
+
+async function getRemoteContentLength(url) {
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(15000),
+    });
+    const value = Number(response.headers.get("content-length"));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch (error) {
+    console.warn("Media HEAD request failed:", error.message);
+    return null;
+  }
+}
+
+async function probeVideoUrl(url) {
+  let stdout;
+
+  try {
+    stdout = await runCommand(ffprobePath, [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration,size:stream=codec_type,width,height",
+      "-of",
+      "json",
+      url,
+    ]);
+  } catch (error) {
+    throw createHttpError(
+      "Не удалось прочитать видео. Загрузите MP4, MOV или WEBM.",
+      400,
+      "INVALID_VIDEO"
+    );
+  }
+
+  let data;
+
+  try {
+    data = JSON.parse(stdout);
+  } catch (error) {
+    throw createHttpError(
+      "Не удалось определить параметры видео",
+      400,
+      "INVALID_VIDEO"
+    );
+  }
+
+  const videoStream = (data.streams || []).find(
+    (stream) => stream.codec_type === "video"
+  );
+  const duration = Number(data.format?.duration);
+  const width = Number(videoStream?.width);
+  const height = Number(videoStream?.height);
+  const reportedSize = Number(data.format?.size);
+  const remoteSize = await getRemoteContentLength(url);
+  const size = Number.isFinite(reportedSize) && reportedSize > 0
+    ? reportedSize
+    : remoteSize;
+
+  if (!videoStream || !Number.isFinite(duration) || duration < 4) {
+    throw createHttpError(
+      "Видео должно длиться не менее 4 секунд",
+      400,
+      "VIDEO_TOO_SHORT"
+    );
+  }
+
+  if (size && size > GENJUTSU_MAX_VIDEO_BYTES) {
+    throw createHttpError(
+      "Размер видео не должен превышать 200 МБ",
+      400,
+      "VIDEO_TOO_LARGE"
+    );
+  }
+
+  return { duration, width, height, size: size || null };
+}
+
+async function getUsdRubRate() {
+  const now = Date.now();
+
+  if (usdRubRateCache && usdRubRateCache.expiresAt > now) {
+    return usdRubRateCache;
+  }
+
+  try {
+    const response = await fetch("https://www.cbr.ru/scripts/XML_daily.asp", {
+      headers: { "User-Agent": "REDAKTOP/1.0" },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`CBR HTTP ${response.status}`);
+    }
+
+    const xml = await response.text();
+    const usdBlock = (xml.match(/<Valute[^>]*>[\s\S]*?<\/Valute>/g) || [])
+      .find((block) => block.includes("<CharCode>USD</CharCode>"));
+    const nominal = Number(usdBlock?.match(/<Nominal>([^<]+)<\/Nominal>/)?.[1]);
+    const value = Number(
+      usdBlock?.match(/<Value>([^<]+)<\/Value>/)?.[1]?.replace(",", ".")
+    );
+    const rate = value / nominal;
+
+    if (!Number.isFinite(rate) || rate <= 0) {
+      throw new Error("USD rate is missing in CBR response");
+    }
+
+    usdRubRateCache = {
+      rate: Number(rate.toFixed(4)),
+      source: "cbr",
+      expiresAt: now + 6 * 60 * 60 * 1000,
+    };
+    return usdRubRateCache;
+  } catch (error) {
+    const fallback = Number(process.env.USD_RUB_RATE);
+
+    if (Number.isFinite(fallback) && fallback > 0) {
+      console.warn("CBR rate unavailable, using USD_RUB_RATE:", error.message);
+      usdRubRateCache = {
+        rate: Number(fallback.toFixed(4)),
+        source: "environment_fallback",
+        expiresAt: now + 15 * 60 * 1000,
+      };
+      return usdRubRateCache;
+    }
+
+    throw createHttpError(
+      "Не удалось получить курс валют. Попробуйте немного позже.",
+      503,
+      "EXCHANGE_RATE_UNAVAILABLE"
+    );
+  }
+}
+
+function sanitizeGenjutsuPresets(result) {
+  const items = Array.isArray(result?.items)
+    ? result.items
+    : Array.isArray(result?.data?.items)
+      ? result.data.items
+      : [];
+
+  return items
+    .filter((item) => item?.id && item?.name)
+    .map((item) => ({
+      id: String(item.id),
+      name: String(item.name),
+      preview_url: item.preview_url ? String(item.preview_url) : null,
+    }));
+}
+
+async function getGenjutsuPresets() {
+  const now = Date.now();
+
+  if (genjutsuPresetCache && genjutsuPresetCache.expiresAt > now) {
+    return genjutsuPresetCache.items;
+  }
+
+  const result = await higgsfieldRequest(
+    "/models/higgsfield/genjutsu/restyle/v1.0/presets"
+  );
+  const items = sanitizeGenjutsuPresets(result);
+
+  if (!items.length) {
+    throw new Error("Higgsfield did not return Genjutsu Restyle presets");
+  }
+
+  genjutsuPresetCache = {
+    items,
+    expiresAt: now + 60 * 60 * 1000,
+  };
+  return items;
 }
 
 function verifyTelegramInitData(initData) {
@@ -2695,6 +3155,29 @@ async function getPlatformCatalog() {
     throw new Error(`Template catalog failed: ${error.message}`);
   }
 
+  let exchangeRate = null;
+
+  try {
+    exchangeRate = await getUsdRubRate();
+  } catch (rateError) {
+    console.warn("Catalog exchange rate unavailable:", rateError.message);
+  }
+
+  const genjutsuPriceRubPerSecond = exchangeRate
+    ? Object.fromEntries(
+        Object.entries(GENJUTSU_RATES_USD).map(([resolution, rate]) => [
+          resolution,
+          Number(
+            (
+              rate *
+              exchangeRate.rate *
+              GENJUTSU_RETAIL_MULTIPLIER
+            ).toFixed(4)
+          ),
+        ])
+      )
+    : {};
+
   return {
     templates: (templates || []).map(sanitizeTemplateForCatalog),
     token_packages: getPublicTokenPackages(),
@@ -2703,6 +3186,10 @@ async function getPlatformCatalog() {
       token_value_rub: TOKEN_VALUE_RUB,
       higgsfield_cost_multiplier: HIGGSFIELD_RETAIL_MULTIPLIER,
       rounding: "ceil_to_token",
+      genjutsu: {
+        price_rub_per_second: genjutsuPriceRubPerSecond,
+        duration_rounding: "ceil_after_trim_to_30_seconds",
+      },
     },
   };
 }
@@ -2863,26 +3350,268 @@ async function createPaidPlatformOrder(initData, templateSlug, photoUrls) {
   };
 }
 
+async function normalizeGenjutsuImageUrls(imageUrls, model, telegramUserId) {
+  const urls = Array.isArray(imageUrls) ? imageUrls : [];
+
+  if (urls.length < model.minImages || urls.length > model.maxImages) {
+    const expected = model.minImages === 0
+      ? `не более ${model.maxImages}`
+      : `от ${model.minImages} до ${model.maxImages}`;
+    throw createHttpError(
+      `Добавьте ${expected} изображений`,
+      400,
+      "INVALID_IMAGE_COUNT"
+    );
+  }
+
+  const normalized = urls.map((url) =>
+    normalizeUploadedMediaUrl(url, "Изображение", telegramUserId)
+  );
+  const sizes = await Promise.all(normalized.map(getRemoteContentLength));
+
+  if (sizes.some((size) => size && size > GENJUTSU_MAX_IMAGE_BYTES)) {
+    throw createHttpError(
+      "Размер каждого изображения не должен превышать 64 МБ",
+      400,
+      "IMAGE_TOO_LARGE"
+    );
+  }
+
+  return normalized;
+}
+
+async function createPaidCustomGeneration(initData, input) {
+  const telegramUser = verifyTelegramInitData(initData);
+  const user = await upsertPlatformUser(telegramUser);
+  const modelKey = String(input?.model_key || "").trim();
+  const model = GENJUTSU_MODELS[modelKey];
+
+  if (!model) {
+    throw createHttpError(
+      "Эта модель пока не поддерживается",
+      400,
+      "UNSUPPORTED_MODEL"
+    );
+  }
+
+  const resolution = String(input?.resolution || "720p").trim();
+
+  if (!GENJUTSU_RATES_USD[resolution]) {
+    throw createHttpError(
+      "Выберите разрешение 480p, 720p или 1080p",
+      400,
+      "INVALID_RESOLUTION"
+    );
+  }
+
+  const prompt = String(input?.prompt || "").trim();
+
+  if (prompt.length > 10000) {
+    throw createHttpError(
+      "Промпт не должен превышать 10 000 символов",
+      400,
+      "PROMPT_TOO_LONG"
+    );
+  }
+
+  const videoUrl = normalizeUploadedMediaUrl(
+    input?.video_url,
+    "Видео",
+    user.telegram_user_id
+  );
+  const imageUrls = await normalizeGenjutsuImageUrls(
+    input?.image_urls,
+    model,
+    user.telegram_user_id
+  );
+  const video = await probeVideoUrl(videoUrl);
+
+  if (
+    model.minimumPixels &&
+    (!video.width || !video.height || video.width * video.height < model.minimumPixels)
+  ) {
+    throw createHttpError(
+      "Для Object Swap видео должно иметь не менее 409 600 пикселей в кадре",
+      400,
+      "VIDEO_RESOLUTION_TOO_LOW"
+    );
+  }
+
+  let presetId = null;
+
+  if (model.requiresPreset) {
+    presetId = String(input?.preset_id || "").trim();
+    const presets = await getGenjutsuPresets();
+
+    if (!presets.some((preset) => preset.id === presetId)) {
+      throw createHttpError(
+        "Выберите доступный стиль Restyle",
+        400,
+        "INVALID_PRESET"
+      );
+    }
+  }
+
+  const billedSeconds = Math.ceil(Math.min(video.duration, 30));
+  const providerCostUsd = Number(
+    (billedSeconds * GENJUTSU_RATES_USD[resolution]).toFixed(6)
+  );
+  const rate = await getUsdRubRate();
+  const pricing = calculateGenerationRetailPrice(
+    providerCostUsd,
+    rate.rate,
+    GENJUTSU_RETAIL_MULTIPLIER
+  );
+  const currentBalance = Number(user.balance_tokens || 0);
+
+  if (currentBalance < pricing.priceTokens) {
+    throw createHttpError(
+      `Недостаточно токенов: нужно ${pricing.priceTokens}, на балансе ${currentBalance}`,
+      402,
+      "INSUFFICIENT_BALANCE",
+      {
+        balance_tokens: currentBalance,
+        required_tokens: pricing.priceTokens,
+      }
+    );
+  }
+
+  const generationId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const { error: draftError } = await supabase.from("custom_generations").insert({
+    id: generationId,
+    user_id: user.id,
+    telegram_user_id: user.telegram_user_id,
+    model_key: modelKey,
+    model_id: model.modelId,
+    status: "failed",
+    prompt: prompt || null,
+    video_url: videoUrl,
+    image_urls: imageUrls,
+    resolution,
+    preset_id: presetId,
+    source_duration_seconds: Number(video.duration.toFixed(3)),
+    source_width: video.width || null,
+    source_height: video.height || null,
+    source_size_bytes: video.size,
+    billed_seconds: billedSeconds,
+    provider_cost_usd: pricing.providerCostUsd,
+    usd_rub_rate: pricing.usdRubRate,
+    markup_multiplier: GENJUTSU_RETAIL_MULTIPLIER,
+    retail_price_rub: pricing.retailPriceRub,
+    charged_tokens: pricing.priceTokens,
+    error_message: "Awaiting token reservation",
+    updated_at: now,
+  });
+
+  if (draftError) {
+    throw new Error(`Custom generation draft failed: ${draftError.message}`);
+  }
+
+  const { data: reservationData, error: reservationError } = await supabase.rpc(
+    "reserve_order_tokens",
+    {
+      p_user_id: user.id,
+      p_order_id: generationId,
+      p_template_slug: `custom:${modelKey}`,
+      p_tokens: pricing.priceTokens,
+    }
+  );
+
+  if (reservationError) {
+    await supabase.from("custom_generations").delete().eq("id", generationId);
+
+    if (/insufficient token balance/i.test(reservationError.message || "")) {
+      throw createHttpError(
+        "Недостаточно токенов для создания",
+        402,
+        "INSUFFICIENT_BALANCE",
+        {
+          balance_tokens: currentBalance,
+          required_tokens: pricing.priceTokens,
+        }
+      );
+    }
+
+    throw new Error(`Custom token reservation failed: ${reservationError.message}`);
+  }
+
+  const { error: activateError } = await supabase
+    .from("custom_generations")
+    .update({ status: "queued", error_message: null, updated_at: now })
+    .eq("id", generationId);
+
+  if (activateError) {
+    await supabase.rpc("refund_order_tokens", {
+      p_order_id: generationId,
+      p_reason: "custom_generation_activation_failed",
+    });
+    throw new Error(`Custom generation activation failed: ${activateError.message}`);
+  }
+
+  return {
+    generation_id: generationId,
+    status: "queued",
+    charged_tokens: pricing.priceTokens,
+    retail_price_rub: pricing.retailPriceRub,
+    billed_seconds: billedSeconds,
+    balance_tokens: Number(reservationData),
+  };
+}
+
 async function getPlatformHistory(initData) {
   const telegramUser = verifyTelegramInitData(initData);
   const telegramUserId = String(telegramUser.id);
-  const { data: orders, error } = await supabase
-    .from("orders")
-    .select(
-      "id, created_at, template_slug, status, paid, price_rub, original_photo_url, preview_image_url, preview_video_url, video_url"
-    )
-    .eq("telegram_user_id", telegramUserId)
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const [ordersResult, customResult] = await Promise.all([
+    supabase
+      .from("orders")
+      .select(
+        "id, created_at, template_slug, status, paid, price_rub, original_photo_url, preview_image_url, preview_video_url, video_url"
+      )
+      .eq("telegram_user_id", telegramUserId)
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("custom_generations")
+      .select(
+        "id, created_at, model_key, status, charged_tokens, image_urls, video_url, result_url"
+      )
+      .eq("telegram_user_id", telegramUserId)
+      .order("created_at", { ascending: false })
+      .limit(50),
+  ]);
 
-  if (error) {
-    throw new Error(`Platform history failed: ${error.message}`);
+  if (ordersResult.error) {
+    throw new Error(`Platform history failed: ${ordersResult.error.message}`);
   }
 
-  return (orders || []).map((order) => ({
+  if (customResult.error) {
+    throw new Error(`Custom history failed: ${customResult.error.message}`);
+  }
+
+  const orders = (ordersResult.data || []).map((order) => ({
     ...order,
     video_url: order.paid ? order.video_url : null,
   }));
+  const customGenerations = (customResult.data || []).map((generation) => ({
+    id: generation.id,
+    created_at: generation.created_at,
+    template_slug:
+      GENJUTSU_MODELS[generation.model_key]?.label || generation.model_key,
+    status: generation.status,
+    paid: true,
+    price_rub: generation.charged_tokens,
+    original_photo_url: Array.isArray(generation.image_urls)
+      ? generation.image_urls[0] || null
+      : null,
+    preview_image_url: null,
+    preview_video_url: null,
+    video_url: generation.result_url || null,
+  }));
+
+  return [...orders, ...customGenerations]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 50);
 }
 
 async function handlePlatformApiRequest(req, res, requestUrl) {
@@ -2914,6 +3643,16 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       return true;
     }
 
+    if (
+      requestUrl.pathname === "/api/genjutsu-presets" &&
+      req.method === "POST"
+    ) {
+      const body = await readJsonRequest(req);
+      verifyTelegramInitData(body.init_data);
+      sendJsonResponse(res, 200, { presets: await getGenjutsuPresets() });
+      return true;
+    }
+
     if (requestUrl.pathname === "/api/history" && req.method === "POST") {
       const body = await readJsonRequest(req);
       sendJsonResponse(res, 200, {
@@ -2932,6 +3671,19 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
           body.template_slug,
           body.photo_urls
         )
+      );
+      return true;
+    }
+
+    if (
+      requestUrl.pathname === "/api/custom-generations" &&
+      req.method === "POST"
+    ) {
+      const body = await readJsonRequest(req);
+      sendJsonResponse(
+        res,
+        201,
+        await createPaidCustomGeneration(body.init_data, body)
       );
       return true;
     }
@@ -3034,9 +3786,11 @@ async function startWorker() {
   await configureTelegramBot();
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
+  setInterval(checkCustomGenerations, CHECK_INTERVAL_MS);
   setInterval(checkTelegramUpdates, 3000);
 
   checkOrders();
+  checkCustomGenerations();
   checkTelegramUpdates();
 }
 
