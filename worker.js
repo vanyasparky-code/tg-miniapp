@@ -62,12 +62,14 @@ const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
 const GENJUTSU_RETAIL_MULTIPLIER = 2;
 const TOKEN_VALUE_RUB = 1;
+const GENJUTSU_USD_RUB_RATE = 100;
+const WEB_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const GENJUTSU_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 const GENJUTSU_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const GENJUTSU_RATES_USD = Object.freeze({
-  "480p": 0.318,
-  "720p": 0.681,
-  "1080p": 1.632,
+  "480p": 0.159,
+  "720p": 0.341,
+  "1080p": 0.816,
 });
 const GENJUTSU_MODELS = Object.freeze({
   genjutsu_motion: {
@@ -145,6 +147,25 @@ function calculateGenerationRetailPrice(
     retailPriceRub: Number(retailPriceRub.toFixed(2)),
     priceTokens,
   };
+}
+
+function calculateGenjutsuPricing(durationSeconds, resolution) {
+  const sourceDuration = Number(durationSeconds);
+  const rateUsd = GENJUTSU_RATES_USD[resolution];
+
+  if (!Number.isFinite(sourceDuration) || sourceDuration <= 0 || !rateUsd) {
+    throw createHttpError("Не удалось рассчитать стоимость видео", 400, "INVALID_VIDEO_PRICING");
+  }
+
+  const billedSeconds = Math.ceil(Math.min(sourceDuration, 30));
+  const providerCostUsd = Number((billedSeconds * rateUsd).toFixed(6));
+  const pricing = calculateGenerationRetailPrice(
+    providerCostUsd,
+    GENJUTSU_USD_RUB_RATE,
+    GENJUTSU_RETAIL_MULTIPLIER
+  );
+
+  return { ...pricing, billedSeconds, resolution };
 }
 
 function runCommand(command, args) {
@@ -3122,6 +3143,129 @@ function verifyTelegramInitData(initData) {
   return user;
 }
 
+function getBotToken() {
+  const botToken = process.env.BOT_TOKEN;
+
+  if (!botToken) {
+    throw new Error("Missing BOT_TOKEN");
+  }
+
+  return botToken;
+}
+
+function verifyTelegramLoginPayload(payload) {
+  const receivedHash = String(payload?.hash || "").trim();
+
+  if (!receivedHash) {
+    throw createHttpError("Некорректные данные входа Telegram", 401, "INVALID_TELEGRAM_LOGIN");
+  }
+
+  const dataCheckString = Object.entries(payload || {})
+    .filter(([key, value]) => key !== "hash" && value !== undefined && value !== null)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secretKey = crypto.createHash("sha256").update(getBotToken()).digest();
+  const expectedHash = crypto
+    .createHmac("sha256", secretKey)
+    .update(dataCheckString)
+    .digest("hex");
+
+  if (!timingSafeSignatureEqual(receivedHash, expectedHash)) {
+    throw createHttpError("Подпись Telegram не прошла проверку", 401, "INVALID_TELEGRAM_LOGIN");
+  }
+
+  const authDate = Number(payload.auth_date);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  if (
+    !Number.isFinite(authDate) ||
+    authDate > nowSeconds + 60 ||
+    nowSeconds - authDate > TELEGRAM_INIT_DATA_MAX_AGE_SECONDS
+  ) {
+    throw createHttpError("Вход Telegram устарел. Войдите ещё раз", 401, "TELEGRAM_LOGIN_EXPIRED");
+  }
+
+  if (!payload.id) {
+    throw createHttpError("Telegram не передал пользователя", 401, "INVALID_TELEGRAM_LOGIN");
+  }
+
+  return {
+    id: String(payload.id),
+    username: payload.username ? String(payload.username) : undefined,
+    first_name: payload.first_name ? String(payload.first_name) : undefined,
+    last_name: payload.last_name ? String(payload.last_name) : undefined,
+    photo_url: payload.photo_url ? String(payload.photo_url) : undefined,
+  };
+}
+
+function createWebSessionToken(telegramUser) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(
+    JSON.stringify({
+      v: 1,
+      iat: nowSeconds,
+      exp: nowSeconds + WEB_SESSION_MAX_AGE_SECONDS,
+      user: {
+        id: String(telegramUser.id),
+        username: telegramUser.username || null,
+        first_name: telegramUser.first_name || null,
+        last_name: telegramUser.last_name || null,
+      },
+    })
+  ).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", getBotToken())
+    .update(payload)
+    .digest("base64url");
+
+  return `${payload}.${signature}`;
+}
+
+function verifyWebSessionToken(token) {
+  const [payload, receivedSignature, extra] = String(token || "").split(".");
+
+  if (!payload || !receivedSignature || extra) {
+    throw createHttpError("Войдите через Telegram", 401, "WEB_SESSION_INVALID");
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", getBotToken())
+    .update(payload)
+    .digest("base64url");
+
+  if (!timingSafeTextEqual(receivedSignature, expectedSignature)) {
+    throw createHttpError("Сессия браузера недействительна", 401, "WEB_SESSION_INVALID");
+  }
+
+  let decoded;
+
+  try {
+    decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch (error) {
+    throw createHttpError("Сессия браузера повреждена", 401, "WEB_SESSION_INVALID");
+  }
+
+  if (!decoded?.user?.id || Number(decoded.exp) <= Math.floor(Date.now() / 1000)) {
+    throw createHttpError("Сессия браузера истекла. Войдите снова", 401, "WEB_SESSION_EXPIRED");
+  }
+
+  return decoded.user;
+}
+
+function getBearerToken(req) {
+  const authorization = String(req.headers.authorization || "");
+  return authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+}
+
+function resolvePlatformTelegramUser(req, body = {}) {
+  if (body.init_data) {
+    return verifyTelegramInitData(body.init_data);
+  }
+
+  return verifyWebSessionToken(getBearerToken(req));
+}
+
 async function upsertPlatformUser(telegramUser) {
   const telegramUserId = String(telegramUser.id);
   const { data: user, error } = await supabase
@@ -3154,7 +3298,7 @@ function getPublicTokenPackages() {
   }));
 }
 
-async function createTokenCheckout(initData, packageId, legalAccepted) {
+async function createTokenCheckout(telegramUser, packageId, legalAccepted) {
   if (legalAccepted !== true) {
     throw createHttpError(
       "Подтвердите согласие с политикой конфиденциальности и публичной офертой",
@@ -3162,7 +3306,6 @@ async function createTokenCheckout(initData, packageId, legalAccepted) {
     );
   }
 
-  const telegramUser = verifyTelegramInitData(initData);
   const tokenPackage = TOKEN_PACKAGES[packageId];
 
   if (!tokenPackage) {
@@ -3238,6 +3381,18 @@ function timingSafeSignatureEqual(left, right) {
   }
 
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function timingSafeTextEqual(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  const leftBuffer = Buffer.from(String(left), "utf8");
+  const rightBuffer = Buffer.from(String(right), "utf8");
+
+  return leftBuffer.length === rightBuffer.length &&
+    crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function collectRobokassaShpParams(params) {
@@ -3559,7 +3714,7 @@ function applyCorsHeaders(req, res) {
   }
 
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 function sendJsonResponse(res, statusCode, body) {
@@ -3627,36 +3782,29 @@ async function getPlatformCatalog() {
     throw new Error(`Template catalog failed: ${error.message}`);
   }
 
-  let exchangeRate = null;
+  const genjutsuPriceRubPerSecond = Object.fromEntries(
+    Object.entries(GENJUTSU_RATES_USD).map(([resolution, rate]) => [
+      resolution,
+      rate * GENJUTSU_USD_RUB_RATE * GENJUTSU_RETAIL_MULTIPLIER,
+    ])
+  );
+  const publicTemplates = (templates || []).map((template) => {
+    const publicTemplate = sanitizeTemplateForCatalog(template);
 
-  try {
-    exchangeRate = await getUsdRubRate();
-  } catch (rateError) {
-    console.warn("Catalog exchange rate unavailable:", rateError.message);
-  }
+    if (template.generation_mode === "genjutsu_motion_template") {
+      publicTemplate.resolution = "480p";
+      publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
+    }
 
-  const genjutsuPriceRubPerSecond = exchangeRate
-    ? Object.fromEntries(
-        Object.entries(GENJUTSU_RATES_USD).map(([resolution, rate]) => [
-          resolution,
-          Number(
-            (
-              rate *
-              exchangeRate.rate *
-              GENJUTSU_RETAIL_MULTIPLIER
-            ).toFixed(4)
-          ),
-        ])
-      )
-    : {};
+    return publicTemplate;
+  });
 
   return {
-    templates: (templates || []).map(sanitizeTemplateForCatalog),
+    templates: publicTemplates,
     token_packages: getPublicTokenPackages(),
     pricing: {
       currency: "RUB",
       token_value_rub: TOKEN_VALUE_RUB,
-      higgsfield_cost_multiplier: HIGGSFIELD_RETAIL_MULTIPLIER,
       rounding: "ceil_to_token",
       genjutsu: {
         price_rub_per_second: genjutsuPriceRubPerSecond,
@@ -3666,8 +3814,7 @@ async function getPlatformCatalog() {
   };
 }
 
-async function getPlatformAccount(initData) {
-  const telegramUser = verifyTelegramInitData(initData);
+async function getPlatformAccount(telegramUser) {
   const user = await upsertPlatformUser(telegramUser);
 
   return {
@@ -3682,7 +3829,11 @@ async function getPlatformAccount(initData) {
   };
 }
 
-function getTemplateTokenPrice(template) {
+function getTemplateTokenPrice(template, resolution = "480p") {
+  if (template?.generation_mode === "genjutsu_motion_template") {
+    return calculateGenjutsuPricing(template.duration, resolution).priceTokens;
+  }
+
   const priceTokens = Math.ceil(Number(template?.price_rub));
 
   if (!Number.isFinite(priceTokens) || priceTokens <= 0) {
@@ -3724,12 +3875,11 @@ function normalizeUploadedPhotoUrls(photoUrls) {
 }
 
 async function createPaidPlatformOrder(
-  initData,
+  telegramUser,
   templateSlug,
   photoUrls,
   requestedResolution
 ) {
-  const telegramUser = verifyTelegramInitData(initData);
   const user = await upsertPlatformUser(telegramUser);
   const normalizedPhotoUrls = normalizeUploadedPhotoUrls(photoUrls);
   const normalizedSlug = String(templateSlug || "").trim();
@@ -3762,9 +3912,9 @@ async function createPaidPlatformOrder(
 
   const availableResolutions = Array.isArray(template.available_resolutions)
     ? template.available_resolutions.map(String)
-    : [String(template.resolution || "720p")];
+    : [String(template.resolution || "480p")];
   const selectedResolution = String(
-    requestedResolution || template.resolution || "720p"
+    requestedResolution || "480p"
   ).trim();
 
   if (!availableResolutions.includes(selectedResolution)) {
@@ -3775,7 +3925,7 @@ async function createPaidPlatformOrder(
     );
   }
 
-  const priceTokens = getTemplateTokenPrice(template);
+  const priceTokens = getTemplateTokenPrice(template, selectedResolution);
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < priceTokens) {
@@ -3890,8 +4040,7 @@ async function normalizeGenjutsuImageUrls(imageUrls, model, telegramUserId) {
   return normalized;
 }
 
-async function createPaidCustomGeneration(initData, input) {
-  const telegramUser = verifyTelegramInitData(initData);
+async function createPaidCustomGeneration(telegramUser, input) {
   const user = await upsertPlatformUser(telegramUser);
   const modelKey = String(input?.model_key || "").trim();
   const model = GENJUTSU_MODELS[modelKey];
@@ -3962,16 +4111,8 @@ async function createPaidCustomGeneration(initData, input) {
     }
   }
 
-  const billedSeconds = Math.ceil(Math.min(video.duration, 30));
-  const providerCostUsd = Number(
-    (billedSeconds * GENJUTSU_RATES_USD[resolution]).toFixed(6)
-  );
-  const rate = await getUsdRubRate();
-  const pricing = calculateGenerationRetailPrice(
-    providerCostUsd,
-    rate.rate,
-    GENJUTSU_RETAIL_MULTIPLIER
-  );
+  const pricing = calculateGenjutsuPricing(video.duration, resolution);
+  const billedSeconds = pricing.billedSeconds;
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < pricing.priceTokens) {
@@ -4069,8 +4210,7 @@ async function createPaidCustomGeneration(initData, input) {
   };
 }
 
-async function getPlatformHistory(initData) {
-  const telegramUser = verifyTelegramInitData(initData);
+async function getPlatformHistory(telegramUser) {
   const telegramUserId = String(telegramUser.id);
   const [ordersResult, customResult] = await Promise.all([
     supabase
@@ -4147,9 +4287,35 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       return true;
     }
 
+    if (requestUrl.pathname === "/api/auth/telegram" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      const telegramUser = verifyTelegramLoginPayload(body.telegram_user || body);
+      const account = await getPlatformAccount(telegramUser);
+      sendJsonResponse(res, 200, {
+        ...account,
+        session_token: createWebSessionToken(telegramUser),
+        expires_in: WEB_SESSION_MAX_AGE_SECONDS,
+      });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/auth/browser-link" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      const telegramUser = resolvePlatformTelegramUser(req, body);
+      const sessionToken = createWebSessionToken(telegramUser);
+      sendJsonResponse(res, 200, {
+        url: `${MINI_APP_URL}/#tg_session=${encodeURIComponent(sessionToken)}`,
+      });
+      return true;
+    }
+
     if (requestUrl.pathname === "/api/account" && req.method === "POST") {
       const body = await readJsonRequest(req);
-      sendJsonResponse(res, 200, await getPlatformAccount(body.init_data));
+      sendJsonResponse(
+        res,
+        200,
+        await getPlatformAccount(resolvePlatformTelegramUser(req, body))
+      );
       return true;
     }
 
@@ -4158,7 +4324,7 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       req.method === "POST"
     ) {
       const body = await readJsonRequest(req);
-      verifyTelegramInitData(body.init_data);
+      resolvePlatformTelegramUser(req, body);
       sendJsonResponse(res, 200, { presets: await getGenjutsuPresets() });
       return true;
     }
@@ -4166,7 +4332,7 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
     if (requestUrl.pathname === "/api/history" && req.method === "POST") {
       const body = await readJsonRequest(req);
       sendJsonResponse(res, 200, {
-        orders: await getPlatformHistory(body.init_data),
+        orders: await getPlatformHistory(resolvePlatformTelegramUser(req, body)),
       });
       return true;
     }
@@ -4177,7 +4343,7 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
         res,
         201,
         await createPaidPlatformOrder(
-          body.init_data,
+          resolvePlatformTelegramUser(req, body),
           body.template_slug,
           body.photo_urls,
           body.resolution
@@ -4194,7 +4360,7 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
       sendJsonResponse(
         res,
         201,
-        await createPaidCustomGeneration(body.init_data, body)
+        await createPaidCustomGeneration(resolvePlatformTelegramUser(req, body), body)
       );
       return true;
     }
@@ -4208,7 +4374,7 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
         res,
         200,
         await createTokenCheckout(
-          body.init_data,
+          resolvePlatformTelegramUser(req, body),
           body.package_id,
           body.legal_accepted
         )

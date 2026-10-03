@@ -47,7 +47,7 @@ insert into public.templates (
   'Замените героев трендового танца фотографиями двух людей и питомца.',
   'swap the video''s main character to the attached characters and his clother.',
   '',
-  1,
+  605,
   true,
   'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-cover.jpg',
   'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-preview.mp4',
@@ -60,7 +60,7 @@ insert into public.templates (
   'genjutsu_motion',
   '9:16',
   19,
-  '720p'
+  '480p'
 )
 on conflict (slug) do update set
   title = excluded.title,
@@ -81,4 +81,3 @@ on conflict (slug) do update set
   aspect_ratio = excluded.aspect_ratio,
   duration = excluded.duration,
   resolution = excluded.resolution;
-
