@@ -681,7 +681,7 @@ async function isUserSubscribedToChannel(telegramUserId) {
   }
 }
 
-async function sendSubscriptionRequiredMessage(chatId, templateSlug = "repeat_001") {
+async function sendSubscriptionRequiredMessage(chatId, templateSlug = "dance_with_dog") {
   const channelLink = process.env.CHANNEL_LINK || "https://t.me/";
 
   await telegramApi("sendMessage", {
@@ -1379,7 +1379,7 @@ async function handleStartMessage(message) {
   }
 
   const parts = text.split(" ");
-  const templateSlug = parts[1] || "repeat_001";
+  const templateSlug = parts[1] || "dance_with_dog";
   const chatId = message.chat.id;
 
   console.log("Start command received:", {
@@ -1824,6 +1824,128 @@ async function refundOrderTokens(order, reason) {
   return result;
 }
 
+async function processGenjutsuTemplateOrder(order, template) {
+  const photoUrls = getOrderPhotoUrls(order);
+  const requiredPhotoCount = Math.max(
+    1,
+    Number(template.required_photo_count || 1)
+  );
+
+  if (photoUrls.length !== requiredPhotoCount) {
+    throw new Error(
+      `Template ${template.slug} requires exactly ${requiredPhotoCount} photos`
+    );
+  }
+
+  const sourceVideoUrl = String(template.source_video_url || "").trim();
+
+  if (!sourceVideoUrl) {
+    throw new Error(`Template source video is missing: ${template.slug}`);
+  }
+
+  const availableResolutions = Array.isArray(template.available_resolutions)
+    ? template.available_resolutions.map(String)
+    : [String(template.resolution || "720p")];
+  const resolution = String(
+    order.selected_resolution || template.resolution || "720p"
+  );
+
+  if (!availableResolutions.includes(resolution)) {
+    throw new Error(`Unsupported template resolution: ${resolution}`);
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("orders")
+    .update({
+      status: "processing",
+      price_rub: template.price_rub || 1,
+      updated_at: now,
+    })
+    .eq("id", order.id);
+
+  if (!order.bot_prepare_message_sent) {
+    const prepareSent = await sendTelegramPreparingMessage(order);
+
+    if (prepareSent) {
+      await supabase
+        .from("orders")
+        .update({
+          bot_prepare_message_sent: true,
+          bot_prepare_message_sent_at: now,
+          updated_at: now,
+        })
+        .eq("id", order.id);
+    }
+  }
+
+  let requestId = order.provider_request_id;
+  let statusUrl = order.provider_status_url;
+
+  if (!requestId) {
+    const request = await createGeneration(
+      GENJUTSU_MODELS.genjutsu_motion.modelId,
+      {
+        video_url: sourceVideoUrl,
+        image_urls: photoUrls,
+        prompt: String(template.video_prompt || "").trim(),
+        resolution,
+      }
+    );
+    requestId = request.generationId;
+    statusUrl = request.statusUrl;
+
+    const { error: requestSaveError } = await supabase
+      .from("orders")
+      .update({
+        provider_request_id: requestId,
+        provider_status_url: statusUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+
+    if (requestSaveError) {
+      throw new Error(
+        `Failed to save template generation request: ${requestSaveError.message}`
+      );
+    }
+  }
+
+  const videoUrl = await pollGeneration(
+    requestId,
+    statusUrl,
+    GENJUTSU_POLL_TIMEOUT_MS
+  );
+  const completedAt = new Date().toISOString();
+  const { error: completeError } = await supabase
+    .from("orders")
+    .update({
+      status: "completed",
+      video_url: videoUrl,
+      error_message: null,
+      updated_at: completedAt,
+    })
+    .eq("id", order.id);
+
+  if (completeError) {
+    throw new Error(`Failed to save template result: ${completeError.message}`);
+  }
+
+  try {
+    await sendTelegramVideo(order.telegram_user_id, videoUrl);
+    await supabase
+      .from("orders")
+      .update({
+        bot_message_sent: true,
+        bot_message_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  } catch (error) {
+    console.error("Template video delivery failed:", order.id, error.message);
+  }
+}
+
 async function processOrder(order) {
   console.log("Processing order:", order.id);
 
@@ -1883,6 +2005,12 @@ async function processOrder(order) {
   if (templateError || !template) {
     throw new Error(`Template not found: ${order.template_slug}`);
   }
+
+  if (template.generation_mode === "genjutsu_motion_template") {
+    await processGenjutsuTemplateOrder(order, template);
+    return;
+  }
+
   if (order.status === "video_ready_locked" && order.video_url) {
   console.log("Recovering video_ready_locked order:", order.id);
 
@@ -2335,7 +2463,7 @@ async function checkOrders() {
       .from("orders")
       .select("*")
       .or(
-        "status.in.(photo_uploaded,photo_ready),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null),and(status.eq.completed,paid.eq.true,bot_message_sent.is.false),and(status.eq.completed,paid.eq.true,bot_message_sent.is.null)"
+        "status.in.(photo_uploaded,photo_ready),and(status.eq.processing,provider_request_id.not.is.null),and(status.eq.video_ready_locked,bot_message_sent.is.false),and(status.eq.video_ready_locked,bot_message_sent.is.null),and(status.eq.completed,paid.eq.true,bot_message_sent.is.false),and(status.eq.completed,paid.eq.true,bot_message_sent.is.null)"
       )
       .limit(1);
 
@@ -3127,12 +3255,17 @@ function sanitizeTemplateForCatalog(template) {
     "thumbnail_url",
     "image_url",
     "reference_url",
+    "preview_video_url",
+    "source_video_url",
     "photo_model",
     "video_model",
     "aspect_ratio",
     "duration",
     "resolution",
     "price_rub",
+    "required_photo_count",
+    "photo_rules",
+    "available_resolutions",
   ];
   const publicTemplate = {};
 
@@ -3149,6 +3282,7 @@ async function getPlatformCatalog() {
   const { data: templates, error } = await supabase
     .from("templates")
     .select("*")
+    .eq("is_active", true)
     .order("slug", { ascending: true });
 
   if (error) {
@@ -3251,7 +3385,12 @@ function normalizeUploadedPhotoUrls(photoUrls) {
   return normalizedUrls;
 }
 
-async function createPaidPlatformOrder(initData, templateSlug, photoUrls) {
+async function createPaidPlatformOrder(
+  initData,
+  templateSlug,
+  photoUrls,
+  requestedResolution
+) {
   const telegramUser = verifyTelegramInitData(initData);
   const user = await upsertPlatformUser(telegramUser);
   const normalizedPhotoUrls = normalizeUploadedPhotoUrls(photoUrls);
@@ -3264,6 +3403,38 @@ async function createPaidPlatformOrder(initData, templateSlug, photoUrls) {
 
   if (templateError || !template) {
     throw createHttpError("Шаблон не найден", 404, "TEMPLATE_NOT_FOUND");
+  }
+
+  if (template.is_active === false) {
+    throw createHttpError("Шаблон больше недоступен", 404, "TEMPLATE_NOT_FOUND");
+  }
+
+  const requiredPhotoCount = Math.max(
+    1,
+    Number(template.required_photo_count || 1)
+  );
+
+  if (normalizedPhotoUrls.length !== requiredPhotoCount) {
+    throw createHttpError(
+      `Для этого шаблона нужно ровно ${requiredPhotoCount} фото`,
+      400,
+      "INVALID_PHOTO_COUNT"
+    );
+  }
+
+  const availableResolutions = Array.isArray(template.available_resolutions)
+    ? template.available_resolutions.map(String)
+    : [String(template.resolution || "720p")];
+  const selectedResolution = String(
+    requestedResolution || template.resolution || "720p"
+  ).trim();
+
+  if (!availableResolutions.includes(selectedResolution)) {
+    throw createHttpError(
+      "Выберите доступное качество видео",
+      400,
+      "INVALID_RESOLUTION"
+    );
   }
 
   const priceTokens = getTemplateTokenPrice(template);
@@ -3286,6 +3457,7 @@ async function createPaidPlatformOrder(initData, templateSlug, photoUrls) {
     template_slug: template.slug,
     original_photo_url: normalizedPhotoUrls[0],
     original_photo_urls: normalizedPhotoUrls,
+    selected_resolution: selectedResolution,
     status: "failed",
     paid: false,
     price_rub: priceTokens,
@@ -3669,7 +3841,8 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
         await createPaidPlatformOrder(
           body.init_data,
           body.template_slug,
-          body.photo_urls
+          body.photo_urls,
+          body.resolution
         )
       );
       return true;
