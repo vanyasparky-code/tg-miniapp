@@ -104,6 +104,8 @@ const BOT_DESCRIPTION =
   "Платите только за результат, остаток не сгорает.\n\n" +
   'Нажмите "Открыть REDAKTOP".';
 let telegramUpdateOffset = 0;
+let supportTelegramUpdateOffset = 0;
+let isCheckingSupportUpdates = false;
 let isCheckingOrders = false;
 let isCheckingCustomGenerations = false;
 let usdRubRateCache = null;
@@ -831,6 +833,342 @@ async function telegramApi(method, payload) {
   }
 
   return data.result;
+}
+
+async function supportTelegramApi(method, payload) {
+  if (!process.env.SUPPORT_BOT_TOKEN) {
+    return null;
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${process.env.SUPPORT_BOT_TOKEN}/${method}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      `Telegram support API ${method} failed: ${JSON.stringify(data)}`
+    );
+  }
+
+  return data.result;
+}
+
+function getSupportOperatorChatIds() {
+  const configuredIds =
+    process.env.SUPPORT_OPERATOR_CHAT_IDS ||
+    process.env.SUPPORT_OPERATOR_CHAT_ID ||
+    "";
+
+  return String(configuredIds)
+    .split(/[\s,;]+/)
+    .map((value) => value.trim())
+    .filter((value) => /^-?\d+$/.test(value));
+}
+
+function isSupportOperator(chatId) {
+  return getSupportOperatorChatIds().includes(String(chatId));
+}
+
+function escapeTelegramHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function saveSupportMessageRoute({
+  operatorChatId,
+  operatorMessageId,
+  userChatId,
+  userTelegramId,
+  username,
+}) {
+  const { error } = await supabase.from("support_message_routes").upsert(
+    {
+      operator_chat_id: String(operatorChatId),
+      operator_message_id: operatorMessageId,
+      user_chat_id: String(userChatId),
+      user_telegram_id: userTelegramId ? String(userTelegramId) : null,
+      username: username || null,
+    },
+    { onConflict: "operator_chat_id,operator_message_id" }
+  );
+
+  if (error) {
+    throw new Error(`Support route save failed: ${error.message}`);
+  }
+}
+
+async function findSupportMessageRoute(operatorChatId, operatorMessageId) {
+  const { data, error } = await supabase
+    .from("support_message_routes")
+    .select("user_chat_id")
+    .eq("operator_chat_id", String(operatorChatId))
+    .eq("operator_message_id", operatorMessageId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Support route lookup failed: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function handleSupportOperatorMessage(message) {
+  const operatorChatId = message.chat.id;
+  const text = message.text || "";
+
+  if (text.startsWith("/start")) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: operatorChatId,
+      text:
+        "Режим оператора поддержки активен.\n\n" +
+        "Чтобы ответить клиенту, нажмите Reply на его сообщение и отправьте текст, фото, видео, голосовое или файл.",
+    });
+    return;
+  }
+
+  if (text.startsWith("/id")) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: operatorChatId,
+      text: `Ваш Telegram ID: <code>${operatorChatId}</code>`,
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
+  const repliedMessageId = message.reply_to_message?.message_id;
+
+  if (!repliedMessageId) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: operatorChatId,
+      text: "Чтобы ответить клиенту, используйте Reply на его сообщении.",
+    });
+    return;
+  }
+
+  const route = await findSupportMessageRoute(
+    operatorChatId,
+    repliedMessageId
+  );
+
+  if (!route) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: operatorChatId,
+      text:
+        "Не удалось определить клиента для этого сообщения. Ответьте через Reply на сообщение обращения, которое прислал бот.",
+    });
+    return;
+  }
+
+  await supportTelegramApi("copyMessage", {
+    chat_id: route.user_chat_id,
+    from_chat_id: operatorChatId,
+    message_id: message.message_id,
+  });
+
+  await supportTelegramApi("sendMessage", {
+    chat_id: operatorChatId,
+    text: "✅ Ответ отправлен клиенту.",
+  });
+}
+
+async function handleSupportCustomerMessage(message) {
+  const userChatId = message.chat.id;
+  const text = message.text || "";
+
+  if (text.startsWith("/start")) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: userChatId,
+      text:
+        "Здравствуйте! Это поддержка REDAKTOP.\n\n" +
+        "Опишите вопрос одним сообщением. Можно прикрепить фото, видео, голосовое сообщение или файл. Мы ответим здесь.",
+    });
+    return;
+  }
+
+  if (text.startsWith("/id")) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: userChatId,
+      text: `Ваш Telegram ID: <code>${userChatId}</code>`,
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
+  const operatorChatIds = getSupportOperatorChatIds();
+
+  if (operatorChatIds.length === 0) {
+    await supportTelegramApi("sendMessage", {
+      chat_id: userChatId,
+      text:
+        "Поддержка сейчас подключается. Пожалуйста, попробуйте отправить сообщение немного позже.",
+    });
+    console.warn("Support message received without configured operator");
+    return;
+  }
+
+  const firstName = escapeTelegramHtml(message.from?.first_name);
+  const lastName = escapeTelegramHtml(message.from?.last_name);
+  const fullName = [firstName, lastName].filter(Boolean).join(" ") || "Без имени";
+  const username = message.from?.username || null;
+  let deliveredCount = 0;
+
+  for (const operatorChatId of operatorChatIds) {
+    try {
+      const header = await supportTelegramApi("sendMessage", {
+        chat_id: operatorChatId,
+        text:
+          "🆕 <b>Новое обращение</b>\n" +
+          `<b>Клиент:</b> ${fullName}\n` +
+          `<b>Username:</b> ${
+            username ? `@${escapeTelegramHtml(username)}` : "не указан"
+          }\n` +
+          `<b>Telegram ID:</b> <code>${message.from?.id || userChatId}</code>\n\n` +
+          "Ответьте через Reply на это сообщение или на сообщение клиента ниже.",
+        parse_mode: "HTML",
+      });
+
+      await saveSupportMessageRoute({
+        operatorChatId,
+        operatorMessageId: header.message_id,
+        userChatId,
+        userTelegramId: message.from?.id,
+        username,
+      });
+
+      const copiedMessage = await supportTelegramApi("copyMessage", {
+        chat_id: operatorChatId,
+        from_chat_id: userChatId,
+        message_id: message.message_id,
+        reply_parameters: {
+          message_id: header.message_id,
+        },
+      });
+
+      await saveSupportMessageRoute({
+        operatorChatId,
+        operatorMessageId: copiedMessage.message_id,
+        userChatId,
+        userTelegramId: message.from?.id,
+        username,
+      });
+
+      deliveredCount += 1;
+    } catch (error) {
+      console.error(
+        `Support delivery to operator ${operatorChatId} failed:`,
+        error.message
+      );
+    }
+  }
+
+  await supportTelegramApi("sendMessage", {
+    chat_id: userChatId,
+    text:
+      deliveredCount > 0
+        ? "✅ Сообщение передано в поддержку. Ответ придёт в этот чат."
+        : "Не удалось передать сообщение. Пожалуйста, попробуйте ещё раз немного позже.",
+  });
+}
+
+async function handleSupportMessage(message) {
+  if (
+    !message ||
+    message.from?.is_bot ||
+    message.chat?.type !== "private"
+  ) {
+    return;
+  }
+
+  if (isSupportOperator(message.chat.id)) {
+    await handleSupportOperatorMessage(message);
+    return;
+  }
+
+  await handleSupportCustomerMessage(message);
+}
+
+async function configureSupportTelegramBot() {
+  if (!process.env.SUPPORT_BOT_TOKEN) {
+    console.log("Support bot is disabled: no SUPPORT_BOT_TOKEN");
+    return;
+  }
+
+  await supportTelegramApi("deleteWebhook", { drop_pending_updates: false });
+
+  const setupCalls = [
+    supportTelegramApi("setMyName", { name: "REDAKTOP Поддержка" }),
+    supportTelegramApi("setMyDescription", {
+      description:
+        "Поддержка REDAKTOP. Напишите вопрос — оператор ответит в этом чате.",
+    }),
+    supportTelegramApi("setMyShortDescription", {
+      short_description: "Поддержка пользователей REDAKTOP.",
+    }),
+    supportTelegramApi("setMyCommands", {
+      commands: [
+        { command: "start", description: "Начать обращение" },
+        { command: "id", description: "Показать мой Telegram ID" },
+      ],
+    }),
+  ];
+
+  const results = await Promise.allSettled(setupCalls);
+  const failures = results.filter((result) => result.status === "rejected");
+
+  if (failures.length) {
+    console.error(
+      "Support bot presentation setup failed:",
+      failures.map((result) => result.reason?.message || String(result.reason))
+    );
+    return;
+  }
+
+  console.log("Support bot configured");
+}
+
+async function checkSupportTelegramUpdates() {
+  if (!process.env.SUPPORT_BOT_TOKEN || isCheckingSupportUpdates) {
+    return;
+  }
+
+  isCheckingSupportUpdates = true;
+
+  try {
+    const updates = await supportTelegramApi("getUpdates", {
+      offset: supportTelegramUpdateOffset,
+      timeout: 0,
+      allowed_updates: ["message"],
+    });
+
+    for (const update of updates || []) {
+      supportTelegramUpdateOffset = update.update_id + 1;
+
+      if (!update.message) {
+        continue;
+      }
+
+      try {
+        await handleSupportMessage(update.message);
+      } catch (error) {
+        console.error("Support message handling failed:", error.message);
+      }
+    }
+  } catch (error) {
+    console.error("Support bot updates error:", error.message);
+  } finally {
+    isCheckingSupportUpdates = false;
+  }
 }
 
 async function configureTelegramBot() {
@@ -3957,14 +4295,19 @@ async function startWorker() {
   startHttpServer();
 
   await configureTelegramBot();
+  await configureSupportTelegramBot().catch((error) => {
+    console.error("Support bot setup failed:", error.message);
+  });
 
   setInterval(checkOrders, CHECK_INTERVAL_MS);
   setInterval(checkCustomGenerations, CHECK_INTERVAL_MS);
   setInterval(checkTelegramUpdates, 3000);
+  setInterval(checkSupportTelegramUpdates, 3000);
 
   checkOrders();
   checkCustomGenerations();
   checkTelegramUpdates();
+  checkSupportTelegramUpdates();
 }
 
 startWorker();
