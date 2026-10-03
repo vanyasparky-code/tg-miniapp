@@ -6,3 +6,6 @@ input.png
 *.jpg
 *.jpeg
 *.png
+!assets/redaktop-wordmark.png
+!assets/guide-bad-hair.png
+!assets/guide-bad-distant.png
