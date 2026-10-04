@@ -96,6 +96,13 @@ const GENJUTSU_MODELS = Object.freeze({
   },
 });
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
+const RAP_IN_CAR_DEFAULT_PROMPT =
+  "swap the video's main characters to the attached characters. Save the faces and save their clothes of all the characters in the uploaded photos.";
+const RAP_IN_CAR_OUTFIT_PROMPT =
+  "swap the video's main characters to the attached characters. Replace all the characters' clothes with gangsta rappers, each character's clothes must be unique. Save the faces of all the characters in the uploaded photos. Add different cool jewelry, gangsta chains, cool watches to them";
+const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
+  rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
+});
 const SUPPORT_URL =
   process.env.SUPPORT_URL || "https://t.me/redaktop_support_bot";
 const CHANNEL_URL = "https://t.me/neuro_video_repeat";
@@ -103,9 +110,9 @@ const BOT_WELCOME_IMAGE_URL = `${MINI_APP_URL}/assets/redaktop-logo.png`;
 const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
   Object.freeze({
     slug: "rap_in_car",
-    title: "Реп в машине",
+    title: "Рэп в машине",
     description: "Замените четырёх героев ролика своими фотографиями.",
-    video_prompt: "swap the video's main characters to the attached characters",
+    video_prompt: RAP_IN_CAR_DEFAULT_PROMPT,
     photo_prompt: "",
     price_rub: 1,
     is_active: true,
@@ -2217,7 +2224,11 @@ async function processGenjutsuTemplateOrder(order, template) {
     );
   }
 
-  const sourceVideoUrl = String(template.source_video_url || "").trim();
+  const sourceVideoUrl = String(
+    TEMPLATE_GENERATION_VIDEO_OVERRIDES[template.slug] ||
+      template.source_video_url ||
+      ""
+  ).trim();
 
   if (!sourceVideoUrl) {
     throw new Error(`Template source video is missing: ${template.slug}`);
@@ -2263,12 +2274,18 @@ async function processGenjutsuTemplateOrder(order, template) {
   let statusUrl = order.provider_status_url;
 
   if (!requestId) {
+    const prompt =
+      template.slug === "rap_in_car"
+        ? order.template_options?.rapper_outfit === true
+          ? RAP_IN_CAR_OUTFIT_PROMPT
+          : RAP_IN_CAR_DEFAULT_PROMPT
+        : String(template.video_prompt || "").trim();
     const request = await createGeneration(
       GENJUTSU_MODELS.genjutsu_motion.modelId,
       {
         video_url: sourceVideoUrl,
         image_urls: photoUrls,
-        prompt: String(template.video_prompt || "").trim(),
+        prompt,
         resolution,
       }
     );
@@ -3963,7 +3980,8 @@ async function createPaidPlatformOrder(
   telegramUser,
   templateSlug,
   photoUrls,
-  requestedResolution
+  requestedResolution,
+  requestedTemplateOptions
 ) {
   const user = await upsertPlatformUser(telegramUser);
   const normalizedPhotoUrls = normalizeUploadedPhotoUrls(photoUrls);
@@ -4011,6 +4029,10 @@ async function createPaidPlatformOrder(
   }
 
   const priceTokens = getTemplateTokenPrice(template, selectedResolution);
+  const templateOptions =
+    template.slug === "rap_in_car"
+      ? { rapper_outfit: requestedTemplateOptions?.rapper_outfit === true }
+      : {};
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < priceTokens) {
@@ -4031,6 +4053,7 @@ async function createPaidPlatformOrder(
     original_photo_url: normalizedPhotoUrls[0],
     original_photo_urls: normalizedPhotoUrls,
     selected_resolution: selectedResolution,
+    template_options: templateOptions,
     status: "failed",
     paid: false,
     price_rub: priceTokens,
@@ -4560,7 +4583,8 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
           resolvePlatformTelegramUser(req, body),
           body.template_slug,
           body.photo_urls,
-          body.resolution
+          body.resolution,
+          body.template_options
         )
       );
       return true;

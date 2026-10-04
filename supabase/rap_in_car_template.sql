@@ -8,6 +8,9 @@ alter table public.templates
   add column if not exists photo_rules jsonb not null default '[]'::jsonb,
   add column if not exists available_resolutions jsonb not null default '["720p"]'::jsonb;
 
+alter table public.orders
+  add column if not exists template_options jsonb not null default '{}'::jsonb;
+
 insert into public.templates (
   slug,
   title,
@@ -30,9 +33,9 @@ insert into public.templates (
   resolution
 ) values (
   'rap_in_car',
-  'Реп в машине',
+  'Рэп в машине',
   'Замените четырёх героев ролика своими фотографиями.',
-  'swap the video''s main characters to the attached characters',
+  'swap the video''s main characters to the attached characters. Save the faces and save their clothes of all the characters in the uploaded photos.',
   '',
   1,
   true,
