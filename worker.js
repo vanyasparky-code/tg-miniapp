@@ -100,13 +100,34 @@ const SUPPORT_URL =
   process.env.SUPPORT_URL || "https://t.me/redaktop_support_bot";
 const CHANNEL_URL = "https://t.me/neuro_video_repeat";
 const BOT_WELCOME_IMAGE_URL = `${MINI_APP_URL}/assets/redaktop-logo.png`;
-const BOT_DESCRIPTION =
-  "Что умеет этот бот?\n\n" +
-  "Создавайте уникальные видео с помощью топовых нейросетей.\n" +
-  "Повторяйте трендовые видео в один клик и получайте миллионы просмотров.\n" +
-  "Представлены уже готовые шаблоны - промты писать не нужно.\n" +
-  "Платите только за результат, остаток не сгорает.\n\n" +
-  'Нажмите "Открыть REDAKTOP".';
+const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
+  Object.freeze({
+    slug: "rap_in_car",
+    title: "Реп в машине",
+    description: "Замените четырёх героев ролика своими фотографиями.",
+    video_prompt: "swap the video's main characters to the attached characters",
+    photo_prompt: "",
+    price_rub: 1,
+    is_active: true,
+    cover_url: `${MINI_APP_URL}/assets/templates/rap-in-car-cover.jpg`,
+    preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-car-preview.mp4`,
+    source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-car-source.mp4`,
+    generation_mode: "genjutsu_motion_template",
+    required_photo_count: 4,
+    photo_rules: [
+      "Человек слева спереди",
+      "Человек справа спереди",
+      "Человек слева сзади",
+      "Человек справа сзади",
+    ],
+    available_resolutions: ["480p", "720p", "1080p"],
+    photo_model: "none",
+    video_model: "genjutsu_motion",
+    aspect_ratio: "16:9",
+    duration: 20.077,
+    resolution: "480p",
+  }),
+]);
 let telegramUpdateOffset = 0;
 let supportTelegramUpdateOffset = 0;
 let isCheckingSupportUpdates = false;
@@ -1130,14 +1151,6 @@ async function configureSupportTelegramBot() {
   await supportTelegramApi("deleteWebhook", { drop_pending_updates: false });
 
   const setupCalls = [
-    supportTelegramApi("setMyName", { name: "REDAKTOP Поддержка" }),
-    supportTelegramApi("setMyDescription", {
-      description:
-        "Поддержка REDAKTOP. Напишите вопрос — оператор ответит в этом чате.",
-    }),
-    supportTelegramApi("setMyShortDescription", {
-      short_description: "Поддержка пользователей REDAKTOP.",
-    }),
     supportTelegramApi("setMyCommands", {
       commands: [
         { command: "start", description: "Начать обращение" },
@@ -1200,12 +1213,6 @@ async function configureTelegramBot() {
   }
 
   const setupCalls = [
-    telegramApi("setMyName", { name: "REDAKTOP" }),
-    telegramApi("setMyDescription", { description: BOT_DESCRIPTION }),
-    telegramApi("setMyShortDescription", {
-      short_description:
-        "AI-фото и видео: готовые шаблоны и свободная генерация.",
-    }),
     telegramApi("setMyCommands", {
       commands: [{ command: "start", description: "Открыть REDAKTOP" }],
     }),
@@ -2220,7 +2227,7 @@ async function processGenjutsuTemplateOrder(order, template) {
     .from("orders")
     .update({
       status: "processing",
-      price_rub: template.price_rub || 1,
+      price_rub: getTemplateTokenPrice(template, resolution),
       updated_at: now,
     })
     .eq("id", order.id);
@@ -3885,11 +3892,22 @@ async function getPlatformAccount(telegramUser) {
 }
 
 function getTemplateTokenPrice(template, resolution = "480p") {
+  const basePrice = Math.ceil(Number(template?.price_rub));
+  const baseResolution = String(template?.resolution || "480p");
+
+  if (
+    String(resolution) === baseResolution &&
+    Number.isFinite(basePrice) &&
+    basePrice > 0
+  ) {
+    return basePrice;
+  }
+
   if (template?.generation_mode === "genjutsu_motion_template") {
     return calculateGenjutsuPricing(template.duration, resolution).priceTokens;
   }
 
-  const priceTokens = Math.ceil(Number(template?.price_rub));
+  const priceTokens = basePrice;
 
   if (!Number.isFinite(priceTokens) || priceTokens <= 0) {
     throw createHttpError(
@@ -4639,6 +4657,18 @@ function startHttpServer() {
   return server;
 }
 
+async function ensureBuiltInTemplates() {
+  const { error } = await supabase
+    .from("templates")
+    .upsert(BUILT_IN_TEMPLATE_ROWS, { onConflict: "slug" });
+
+  if (error) {
+    throw new Error(`Built-in template sync failed: ${error.message}`);
+  }
+
+  console.log("Built-in templates synchronized");
+}
+
 async function startWorker() {
   console.log("Higgsfield worker started");
 
@@ -4647,6 +4677,10 @@ async function startWorker() {
   }
 
   startHttpServer();
+
+  await ensureBuiltInTemplates().catch((error) => {
+    console.error(error.message);
+  });
 
   await configureTelegramBot();
   await configureSupportTelegramBot().catch((error) => {

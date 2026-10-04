@@ -8,15 +8,6 @@ alter table public.templates
   add column if not exists photo_rules jsonb not null default '[]'::jsonb,
   add column if not exists available_resolutions jsonb not null default '["720p"]'::jsonb;
 
-alter table public.orders
-  add column if not exists selected_resolution text,
-  add column if not exists provider_request_id text,
-  add column if not exists provider_status_url text;
-
-create index if not exists orders_provider_request_idx
-  on public.orders(provider_request_id)
-  where provider_request_id is not null;
-
 insert into public.templates (
   slug,
   title,
@@ -38,24 +29,24 @@ insert into public.templates (
   duration,
   resolution
 ) values (
-  'dance_with_dog',
-  'Танец с собачкой',
-  'Замените героев трендового танца фотографиями двух людей и питомца.',
-  'swap the video''s main character to the attached characters and his clother.',
+  'rap_in_car',
+  'Реп в машине',
+  'Замените четырёх героев ролика своими фотографиями.',
+  'swap the video''s main characters to the attached characters',
   '',
-  605,
+  1,
   true,
-  'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-cover.jpg',
-  'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-preview.mp4',
-  'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-source.mp4',
+  'https://tg-miniapp-liart.vercel.app/assets/templates/rap-in-car-cover.jpg',
+  'https://tg-miniapp-liart.vercel.app/assets/templates/rap-in-car-preview.mp4',
+  'https://tg-miniapp-liart.vercel.app/assets/templates/rap-in-car-source.mp4',
   'genjutsu_motion_template',
-  3,
-  '["Человек слева", "Человек справа", "Питомец"]'::jsonb,
+  4,
+  '["Человек слева спереди", "Человек справа спереди", "Человек слева сзади", "Человек справа сзади"]'::jsonb,
   '["480p", "720p", "1080p"]'::jsonb,
   'none',
   'genjutsu_motion',
-  '9:16',
-  19,
+  '16:9',
+  20.077,
   '480p'
 )
 on conflict (slug) do update set
