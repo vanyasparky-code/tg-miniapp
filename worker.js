@@ -5,6 +5,7 @@ const fs = require("fs/promises");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { Readable } = require("stream");
 const ffmpegPath = require("ffmpeg-static");
 const ffprobePath = require("ffprobe-static").path;
 const sharp = require("sharp");
@@ -64,6 +65,7 @@ const GENJUTSU_RETAIL_MULTIPLIER = 2;
 const TOKEN_VALUE_RUB = 1;
 const GENJUTSU_USD_RUB_RATE = 100;
 const WEB_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const HISTORY_DOWNLOAD_MAX_AGE_SECONDS = 10 * 60;
 const GENJUTSU_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 const GENJUTSU_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const GENJUTSU_RATES_USD = Object.freeze({
@@ -3266,6 +3268,59 @@ function resolvePlatformTelegramUser(req, body = {}) {
   return verifyWebSessionToken(getBearerToken(req));
 }
 
+function createHistoryDownloadToken(telegramUserId, kind, itemId) {
+  const payload = Buffer.from(
+    JSON.stringify({
+      v: 1,
+      exp: Math.floor(Date.now() / 1000) + HISTORY_DOWNLOAD_MAX_AGE_SECONDS,
+      user_id: String(telegramUserId),
+      kind: kind === "custom" ? "custom" : "template",
+      item_id: String(itemId),
+    })
+  ).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", getBotToken())
+    .update(`history-download:${payload}`)
+    .digest("base64url");
+
+  return `${payload}.${signature}`;
+}
+
+function verifyHistoryDownloadToken(token) {
+  const [payload, receivedSignature, extra] = String(token || "").split(".");
+
+  if (!payload || !receivedSignature || extra) {
+    throw createHttpError("Ссылка для скачивания недействительна", 401);
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", getBotToken())
+    .update(`history-download:${payload}`)
+    .digest("base64url");
+
+  if (!timingSafeTextEqual(receivedSignature, expectedSignature)) {
+    throw createHttpError("Ссылка для скачивания недействительна", 401);
+  }
+
+  let decoded;
+
+  try {
+    decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch (error) {
+    throw createHttpError("Ссылка для скачивания повреждена", 401);
+  }
+
+  if (
+    !decoded?.user_id ||
+    !decoded?.item_id ||
+    Number(decoded.exp) <= Math.floor(Date.now() / 1000)
+  ) {
+    throw createHttpError("Ссылка для скачивания истекла", 401);
+  }
+
+  return decoded;
+}
+
 async function upsertPlatformUser(telegramUser) {
   const telegramUserId = String(telegramUser.id);
   const { data: user, error } = await supabase
@@ -4239,15 +4294,46 @@ async function getPlatformHistory(telegramUser) {
     throw new Error(`Custom history failed: ${customResult.error.message}`);
   }
 
+  const templateSlugs = [...new Set(
+    (ordersResult.data || []).map((order) => order.template_slug).filter(Boolean)
+  )];
+  let templateTitles = new Map();
+
+  if (templateSlugs.length) {
+    const templatesResult = await supabase
+      .from("templates")
+      .select("slug, title")
+      .in("slug", templateSlugs);
+
+    if (templatesResult.error) {
+      console.warn("History template titles failed:", templatesResult.error.message);
+    } else {
+      templateTitles = new Map(
+        (templatesResult.data || []).map((template) => [
+          template.slug,
+          template.title,
+        ])
+      );
+    }
+  }
+
   const orders = (ordersResult.data || []).map((order) => ({
     ...order,
+    kind: "template",
+    title:
+      templateTitles.get(order.template_slug) ||
+      (order.template_slug === "dance_with_dog"
+        ? "Танец с собачкой"
+        : "Видео по шаблону"),
     video_url: order.paid ? order.video_url : null,
   }));
   const customGenerations = (customResult.data || []).map((generation) => ({
     id: generation.id,
+    kind: "custom",
     created_at: generation.created_at,
     template_slug:
       GENJUTSU_MODELS[generation.model_key]?.label || generation.model_key,
+    title: "Видео, созданное с нуля",
     status: generation.status,
     paid: true,
     price_rub: generation.charged_tokens,
@@ -4262,6 +4348,75 @@ async function getPlatformHistory(telegramUser) {
   return [...orders, ...customGenerations]
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     .slice(0, 50);
+}
+
+async function getOwnedHistoryVideo(userId, kind, itemId) {
+  const table = kind === "custom" ? "custom_generations" : "orders";
+  const videoColumn = kind === "custom" ? "result_url" : "video_url";
+  const { data, error } = await supabase
+    .from(table)
+    .select(`id, status, telegram_user_id, ${videoColumn}`)
+    .eq("id", String(itemId))
+    .eq("telegram_user_id", String(userId))
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`History video lookup failed: ${error.message}`);
+  }
+
+  const videoUrl = data?.[videoColumn];
+
+  if (!data || data.status !== "completed" || !videoUrl) {
+    throw createHttpError("Готовое видео не найдено", 404, "VIDEO_NOT_READY");
+  }
+
+  return String(videoUrl);
+}
+
+function publicRequestBaseUrl(req) {
+  const protocol = String(req.headers["x-forwarded-proto"] || "https")
+    .split(",")[0]
+    .trim();
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "");
+  return `${protocol}://${host}`;
+}
+
+async function streamHistoryVideo(req, res, downloadToken) {
+  const payload = verifyHistoryDownloadToken(downloadToken);
+  const videoUrl = await getOwnedHistoryVideo(
+    payload.user_id,
+    payload.kind,
+    payload.item_id
+  );
+  const upstream = await fetch(videoUrl, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(120000),
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    throw createHttpError("Не удалось скачать видео", 502, "VIDEO_DOWNLOAD_FAILED");
+  }
+
+  res.statusCode = 200;
+  res.setHeader(
+    "Content-Type",
+    upstream.headers.get("content-type") || "video/mp4"
+  );
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength) res.setHeader("Content-Length", contentLength);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="redaktop-${payload.item_id}.mp4"`
+  );
+
+  await new Promise((resolve, reject) => {
+    const stream = Readable.fromWeb(upstream.body);
+    stream.on("error", reject);
+    res.on("error", reject);
+    res.on("finish", resolve);
+    stream.pipe(res);
+  });
 }
 
 async function handlePlatformApiRequest(req, res, requestUrl) {
@@ -4316,6 +4471,35 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
         200,
         await getPlatformAccount(resolvePlatformTelegramUser(req, body))
       );
+      return true;
+    }
+
+    if (
+      requestUrl.pathname === "/api/history-download" &&
+      req.method === "POST"
+    ) {
+      const body = await readJsonRequest(req);
+      const telegramUser = resolvePlatformTelegramUser(req, body);
+      const kind = body.kind === "custom" ? "custom" : "template";
+      await getOwnedHistoryVideo(telegramUser.id, kind, body.item_id);
+      const token = createHistoryDownloadToken(
+        telegramUser.id,
+        kind,
+        body.item_id
+      );
+      sendJsonResponse(res, 200, {
+        download_url: `${publicRequestBaseUrl(req)}/api/history-file?token=${encodeURIComponent(token)}`,
+        file_name: `redaktop-${body.item_id}.mp4`,
+        expires_in: HISTORY_DOWNLOAD_MAX_AGE_SECONDS,
+      });
+      return true;
+    }
+
+    if (
+      requestUrl.pathname === "/api/history-file" &&
+      req.method === "GET"
+    ) {
+      await streamHistoryVideo(req, res, requestUrl.searchParams.get("token"));
       return true;
     }
 
@@ -4385,11 +4569,15 @@ async function handlePlatformApiRequest(req, res, requestUrl) {
     sendJsonResponse(res, 404, { error: "API endpoint not found" });
   } catch (error) {
     console.error("Platform API error:", error.message);
-    sendJsonResponse(res, error.statusCode || 500, {
-      error: error.message,
-      code: error.apiCode || undefined,
-      details: error.details || undefined,
-    });
+    if (!res.headersSent) {
+      sendJsonResponse(res, error.statusCode || 500, {
+        error: error.message,
+        code: error.apiCode || undefined,
+        details: error.details || undefined,
+      });
+    } else {
+      res.destroy(error);
+    }
   }
 
   return true;
