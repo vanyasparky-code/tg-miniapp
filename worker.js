@@ -664,7 +664,17 @@ async function createPreviewMedia(videoUrl, orderId, existingPreviewImageUrl) {
       existingPreviewImageUrl || (await createBlurredPreview(videoUrl, orderId)),
   };
 }
-async function sendTelegramErrorMessage(order) {
+function isContentSafetyError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+
+  return (
+    message.includes("nsfw") ||
+    message.includes("content safety") ||
+    message.includes("safety restriction")
+  );
+}
+
+async function sendTelegramErrorMessage(order, generationError = null) {
   if (!process.env.BOT_TOKEN) {
     console.log("No BOT_TOKEN found, skipping error message");
     return false;
@@ -676,11 +686,13 @@ async function sendTelegramErrorMessage(order) {
   }
 
   try {
+    const text = isContentSafetyError(generationError)
+      ? "⚠️ Нейросеть не смогла обработать загруженные фотографии из-за ограничений безопасности.\n\nПопробуйте загрузить другие фото и запустить создание ещё раз."
+      : "⚠️ Произошла ошибка генерации.\n\nПопробуйте снова, пожалуйста.";
+
     await telegramApi("sendMessage", {
       chat_id: order.telegram_user_id,
-      text:
-        "⚠️ Произошла ошибка генерации.\n\n" +
-        "Попробуйте снова, пожалуйста.",
+      text,
     });
 
     console.log("Telegram error message sent:", order.id);
@@ -2800,7 +2812,7 @@ async function checkCustomGenerations() {
             console.error("Custom generation refund failed:", refundError.message);
           }
 
-          await sendTelegramErrorMessage(generation);
+          await sendTelegramErrorMessage(generation, error);
           await supabase
             .from("custom_generations")
             .update({
@@ -2863,7 +2875,7 @@ async function checkOrders() {
           }
         }
 
-        const errorSent = await sendTelegramErrorMessage(order);
+        const errorSent = await sendTelegramErrorMessage(order, error);
 
         await supabase
           .from("orders")
