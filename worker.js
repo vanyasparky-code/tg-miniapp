@@ -102,6 +102,8 @@ const RAP_IN_CAR_DEFAULT_PROMPT =
   `${RAP_IN_CAR_IDENTITY_PROMPT} Preserve each person's original referenced clothing and accessories. Change only the original actors into the referenced people.`;
 const RAP_IN_CAR_OUTFIT_PROMPT =
   `${RAP_IN_CAR_IDENTITY_PROMPT} Change only the clothing to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit every outfit over the person's unchanged body without altering their build or proportions.`;
+const ZOMBIE_DRAMA_PROMPT =
+  "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
@@ -134,6 +136,27 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
     duration: 20.077,
+    resolution: "480p",
+  }),
+  Object.freeze({
+    slug: "zombie_drama",
+    title: "Зомби драма",
+    description: "Станьте героями драматичной истории о любви и зомби.",
+    video_prompt: ZOMBIE_DRAMA_PROMPT,
+    photo_prompt: "",
+    price_rub: 1,
+    is_active: true,
+    cover_url: `${MINI_APP_URL}/assets/templates/zombie-drama-cover.jpg`,
+    preview_video_url: `${MINI_APP_URL}/assets/templates/zombie-drama-preview.mp4`,
+    source_video_url: `${MINI_APP_URL}/assets/templates/zombie-drama-source.mp4`,
+    generation_mode: "genjutsu_motion_template",
+    required_photo_count: 2,
+    photo_rules: ["Мужчина", "Девушка"],
+    available_resolutions: ["480p", "720p", "1080p"],
+    photo_model: "none",
+    video_model: "genjutsu_motion",
+    aspect_ratio: "16:9",
+    duration: 24.071,
     resolution: "480p",
   }),
 ]);
