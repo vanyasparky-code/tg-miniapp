@@ -135,7 +135,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     photo_model: "none",
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
-    duration: 20.077,
+    duration: 20,
     resolution: "480p",
   }),
   Object.freeze({
@@ -156,7 +156,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     photo_model: "none",
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
-    duration: 24.071,
+    duration: 24,
     resolution: "480p",
   }),
 ]);

@@ -49,7 +49,7 @@ insert into public.templates (
   'none',
   'genjutsu_motion',
   '16:9',
-  20.077,
+  20,
   '480p'
 )
 on conflict (slug) do update set
