@@ -96,12 +96,9 @@ const GENJUTSU_MODELS = Object.freeze({
   },
 });
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
-const RAP_IN_CAR_IDENTITY_LOCK =
-  "Replace exactly four source-video actors with four separate people from the reference images. Treat every reference image as an exclusive identity source. Never average, blend, merge, or borrow facial or body features between references, and never mix a reference identity with the original source actor. Strict mapping for the entire video: image 1 exclusively defines the front-left passenger (screen left foreground); image 2 exclusively defines the front-right driver behind the steering wheel (screen right foreground); image 3 exclusively defines the rear-left passenger (screen left background); image 4 exclusively defines the rear-right passenger (screen right background). Never swap these identities or positions. CRITICAL IDENTITY PRIORITY: the front-right driver must be an exact, recognizable reproduction of image 2 only. Copy image 2's face geometry, head shape, eyes, eyebrows, nose, lips, jawline, cheeks, ears, skin tone, facial hair, hairline, hairstyle, and hair color. Do not retain any facial feature from the original driver and do not combine image 2 with images 1, 3, or 4. Keep the image-2 identity stable in every frame, including profile views, head turns, open-mouth singing, hand movement, and motion blur. Apply the same exclusive identity preservation to images 1, 3, and 4. Preserve each person's apparent age, gender presentation, natural body build, weight, height, shoulder width, and body proportions; do not make anyone thinner, heavier, taller, shorter, younger, or older. Maintain temporal consistency with no face morphing, identity drift, duplicate faces, or hybrid people. Preserve the source video's car interior, camera, framing, lighting, timing, seat positions, gestures, movement, and lip movement.";
-const RAP_IN_CAR_DEFAULT_PROMPT =
-  `${RAP_IN_CAR_IDENTITY_LOCK} Preserve the exact clothing, colors, materials, and accessories shown in each corresponding reference image. If part of an outfit is not visible, extend that same outfit naturally without changing its style. Change only the four actors' identities and reproduce their referenced clothing; do not change anything else.`;
+const RAP_IN_CAR_DEFAULT_PROMPT = "";
 const RAP_IN_CAR_OUTFIT_PROMPT =
-  `${RAP_IN_CAR_IDENTITY_LOCK} Change only the clothing to four distinct early-2000s hip-hop and gangsta-rap looks inspired by oversized streetwear, sports jerseys, baggy jeans, leather jackets, tracksuits, caps, bandanas, bold chains, rings, and luxury watches. Image 1 wears a black oversized leather-and-jersey look with a gold chain. Image 2, the driver, wears a black-and-gold oversized sports jersey with baggy dark jeans and a statement watch; changing the driver's clothes must not change or blend the image-2 face or body. Image 3 wears a red bandana-inspired streetwear look with layered chains. Image 4 wears a pink-and-white oversized rap look with baggy jeans and silver jewelry. Fit each outfit naturally to the person's unchanged body. Every outfit and accessory set must be clearly different. Headwear and jewelry must not cover, reshape, or distort faces. Change only the outfits after locking all four identities.`;
+  "Change only the clothing of all four characters to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit the clothes naturally to each character's existing body. Do not change faces, hairstyles, bodies, positions, actions, the car interior, camera, lighting, or timing.";
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
@@ -2282,14 +2279,19 @@ async function processGenjutsuTemplateOrder(order, template) {
           ? RAP_IN_CAR_OUTFIT_PROMPT
           : RAP_IN_CAR_DEFAULT_PROMPT
         : String(template.video_prompt || "").trim();
+    const generationInput = {
+      video_url: sourceVideoUrl,
+      image_urls: photoUrls,
+      resolution,
+    };
+
+    if (prompt) {
+      generationInput.prompt = prompt;
+    }
+
     const request = await createGeneration(
       GENJUTSU_MODELS.genjutsu_motion.modelId,
-      {
-        video_url: sourceVideoUrl,
-        image_urls: photoUrls,
-        prompt,
-        resolution,
-      }
+      generationInput
     );
     requestId = request.generationId;
     statusUrl = request.statusUrl;
