@@ -96,9 +96,12 @@ const GENJUTSU_MODELS = Object.freeze({
   },
 });
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
-const RAP_IN_CAR_DEFAULT_PROMPT = "";
+const RAP_IN_CAR_IDENTITY_PROMPT =
+  "Strictly preserve the exact identity and natural appearance of every person from the uploaded reference images throughout the entire video. Each reference image represents one separate person: never blend, average, merge, or exchange facial or body features between people, and never mix them with the original actors. Reproduce each person's recognizable face exactly, including face shape, head shape, eyes, eyebrows, nose, lips, jawline, cheeks, ears, skin tone, facial hair, hairline, hairstyle, and hair color. Preserve each person's exact natural body parameters from their own reference: apparent height, weight, body build, shoulder width, chest, waist, neck, arms, legs, and overall proportions. Do not make anyone thinner, heavier, taller, shorter, younger, older, more muscular, or differently proportioned. Keep all identities, faces, and body proportions stable in every frame, including head turns, profile views, open-mouth singing, gestures, and motion blur. No face morphing, identity drift, hybrid faces, duplicated faces, or body-shape drift. Keep the existing character positions, actions, motion, timing, car interior, camera, framing, and lighting unchanged.";
+const RAP_IN_CAR_DEFAULT_PROMPT =
+  `${RAP_IN_CAR_IDENTITY_PROMPT} Preserve each person's original referenced clothing and accessories. Change only the original actors into the referenced people.`;
 const RAP_IN_CAR_OUTFIT_PROMPT =
-  "Change only the clothing of all four characters to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit the clothes naturally to each character's existing body. Do not change faces, hairstyles, bodies, positions, actions, the car interior, camera, lighting, or timing.";
+  `${RAP_IN_CAR_IDENTITY_PROMPT} Change only the clothing to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit every outfit over the person's unchanged body without altering their build or proportions.`;
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
