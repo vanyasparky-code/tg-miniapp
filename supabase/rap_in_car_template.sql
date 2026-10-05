@@ -35,7 +35,7 @@ insert into public.templates (
   'rap_in_car',
   'Рэп в машине',
   'Замените четырёх героев ролика своими фотографиями.',
-  'swap the video''s main characters to the attached characters. Save the faces and save their clothes of all the characters in the uploaded photos.',
+  'Replace the four people in the source video with the four people from the reference images. Use this strict mapping in every frame: image 1 = front-left person (screen left foreground); image 2 = front-right person (screen right foreground); image 3 = rear-left person (screen left background); image 4 = rear-right person (screen right background). Never swap identities or positions. Preserve each referenced person''s exact recognizable identity, facial structure, eyes, nose, mouth, skin tone, hairstyle, hair color, apparent age, gender presentation, and natural body build. Keep their original body proportions, weight, shoulder width, and face shape; do not make anyone thinner, heavier, taller, shorter, younger, or older. Preserve the clothing, colors, materials, and accessories shown in each corresponding reference image. If part of an outfit is not visible, extend the same outfit naturally without changing its style. Keep faces and bodies consistent throughout the entire video without morphing or identity drift. Preserve the source video''s car interior, camera angle, framing, lighting, timing, movements, gestures, lip movement, and seat positions. Change only the identities and clothing of the four people according to the references.',
   '',
   1,
   true,
