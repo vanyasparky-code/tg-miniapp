@@ -104,6 +104,8 @@ const RAP_IN_CAR_OUTFIT_PROMPT =
   `${RAP_IN_CAR_IDENTITY_PROMPT} Change only the clothing to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit every outfit over the person's unchanged body without altering their build or proportions.`;
 const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
+const POPSTAR_PROMPT =
+  "Edit the uploaded source video and replace only the main performer and the security guard. Image 1 replaces the main performer in every shot. Image 2 replaces the security guard in every shot where the guard appears. Keep each reference as one separate person and strictly preserve their exact recognizable identity, facial structure, hair, skin tone, age, natural body build, height, weight, proportions, clothing, and accessories throughout the entire video. Never blend, swap, average, or combine their features with each other or with the original actors. No face morphing, identity drift, body-shape drift, duplicated faces, flicker, or warping. Keep the pop-art frame beside the stairs identical to the source video in size, proportions, position, perspective, lighting, and occluded areas. It must be a static 2x2 grid showing the same front-facing portrait of the performer from image 1 in all four quadrants with the same composition, changing only the colors: top left has a purple background and yellow-orange face; top right has a yellow background and blue-green face; bottom left has a light green background, green-yellow face, and dark blue accents; bottom right has a blue background, light mint face, and pink accents. Do not use abstract art, the original actor's face, or four different people. While the performer walks down the stairs, preserve the original phone-drop action exactly: match the hand movement, the exact moment the phone visibly leaves the hand, the release point, and the full trajectory. The phone must clearly come out of the hand and must not disappear, remain in the hand, or fall without being thrown. The other hand must continue holding the bottle exactly as in the source. Preserve all background guests and women from the original video with their identities, clothing, approximate positions, and individual natural movements. Keep every original step, gesture, head turn, raised hand, glass movement, and dance active and natural at the entrance, in the hallway, on the stairs, and by the pool. Do not freeze background people, synchronize their dancing, add people, remove people, or make them follow one choreography. Preserve the original camera movement, shots, cuts, framing, duration, lighting, locations, props, acting, facial expressions, mouth movements, sound, timing, and action rhythm. Everything else must remain identical to the source video. Ultrarealistic live-action, no restyle and no new scenes.";
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
@@ -157,6 +159,27 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
     duration: 24,
+    resolution: "480p",
+  }),
+  Object.freeze({
+    slug: "popstar",
+    title: "Попстар",
+    description: "Станьте главным героем звёздной вечеринки.",
+    video_prompt: POPSTAR_PROMPT,
+    photo_prompt: "",
+    price_rub: 1,
+    is_active: true,
+    cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
+    preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
+    source_video_url: `${MINI_APP_URL}/assets/templates/popstar-source.mp4`,
+    generation_mode: "genjutsu_motion_template",
+    required_photo_count: 2,
+    photo_rules: ["Исполнитель", "Охранник"],
+    available_resolutions: ["480p", "720p", "1080p"],
+    photo_model: "none",
+    video_model: "genjutsu_motion",
+    aspect_ratio: "16:9",
+    duration: 30,
     resolution: "480p",
   }),
 ]);
