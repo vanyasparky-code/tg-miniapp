@@ -5,3 +5,7 @@ url = "https://mcp.vercel.com"
 [mcp_servers.supabase]
 type = "http"
 url = "https://mcp.supabase.com/mcp?project_ref=wkgvsajgiqziotuenkrj"
+
+[mcp_servers.railway]
+type = "http"
+url = "https://mcp.railway.com"
