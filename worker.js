@@ -191,6 +191,12 @@ const RAP_IN_CAR_DEFAULT_PROMPT =
   `${RAP_IN_CAR_IDENTITY_PROMPT} Preserve each person's original referenced clothing and accessories. Change only the original actors into the referenced people.`;
 const RAP_IN_CAR_OUTFIT_PROMPT =
   `${RAP_IN_CAR_IDENTITY_PROMPT} Change only the clothing to four distinct early-2000s gangsta-rap outfits. Use oversized sports jerseys, baggy jeans, leather streetwear, tracksuits, caps or bandanas, bold chains, rings, and luxury watches. Give every character a different coordinated outfit and different accessories. Fit every outfit over the person's unchanged body without altering their build or proportions.`;
+const RAP_IN_STUDIO_IDENTITY_PROMPT =
+  "Edit the uploaded source video and replace exactly the two performers. Image 1 must replace only the person on the left, and image 2 must replace only the person on the right. Keep image 1 and image 2 as two separate, stable identities and never blend, swap, merge, or average their facial or body features. Strictly preserve each referenced person's recognizable face, head shape, eyes, eyebrows, nose, lips, jawline, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, and natural body proportions in every frame. Do not beautify, slim, enlarge, masculinize, feminize, or redesign either person. Preserve the original left-right placement throughout the video. Match both people precisely to the original performers' head positions, eye lines, gestures, lip movements, hand movements, posture, rhythm, interaction with the hanging microphone, and full-body motion. Preserve the original camera movement, camera shake, zoom, framing, focus, cuts, timing, lighting, orange studio background, floor, hanging microphone, props, shadows, and audio. Keep every movement and camera action identical to the source video. Replace only the two people. Photorealistic live-action, stable faces, natural skin, no identity drift, no face morphing, no duplicated people, no extra people, and no restyle.";
+const RAP_IN_STUDIO_DEFAULT_PROMPT =
+  `${RAP_IN_STUDIO_IDENTITY_PROMPT} Preserve the exact clothing, footwear, jewelry, glasses, and accessories worn by each person in their own reference image.`;
+const RAP_IN_STUDIO_OUTFIT_PROMPT =
+  `${RAP_IN_STUDIO_IDENTITY_PROMPT} Change only the clothing and accessories into two distinct premium rap-performance outfits. Give the left performer and right performer different coordinated looks inspired by modern hip-hop studio fashion: oversized streetwear layers, varsity or leather jackets, graphic shirts or jerseys, relaxed baggy trousers, clean sneakers or boots, tasteful chains, rings, bracelets, and luxury watches. Keep accessories away from the eyes and do not obscure either face. Fit each outfit over the person's unchanged body without changing height, weight, build, shoulders, waist, limbs, or proportions. Do not change faces, skin, hair, age, pose, movement, or position.`;
 const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
 const POPSTAR_PROMPT =
@@ -237,6 +243,27 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
     duration: 20,
+    resolution: "480p",
+  }),
+  Object.freeze({
+    slug: "rap_in_studio",
+    title: "Рэп в студии",
+    description: "Запишите студийный рэп-перформанс со своими героями.",
+    video_prompt: RAP_IN_STUDIO_DEFAULT_PROMPT,
+    photo_prompt: "",
+    price_rub: 1,
+    is_active: true,
+    cover_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-cover.jpg`,
+    preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-preview.mp4`,
+    source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-source.mp4`,
+    generation_mode: "genjutsu_motion_template",
+    required_photo_count: 2,
+    photo_rules: ["Человек слева", "Человек справа"],
+    available_resolutions: ["480p", "720p", "1080p"],
+    photo_model: "none",
+    video_model: "genjutsu_motion",
+    aspect_ratio: "16:9",
+    duration: 24,
     resolution: "480p",
   }),
   Object.freeze({
@@ -2516,7 +2543,11 @@ async function processGenjutsuTemplateOrder(order, template) {
         ? order.template_options?.rapper_outfit === true
           ? RAP_IN_CAR_OUTFIT_PROMPT
           : RAP_IN_CAR_DEFAULT_PROMPT
-        : template.slug === "popstar"
+        : template.slug === "rap_in_studio"
+          ? order.template_options?.rapper_outfit === true
+            ? RAP_IN_STUDIO_OUTFIT_PROMPT
+            : RAP_IN_STUDIO_DEFAULT_PROMPT
+          : template.slug === "popstar"
           ? order.template_options?.keep_guard === true
             ? POPSTAR_PERFORMER_ONLY_PROMPT
             : POPSTAR_PROMPT
@@ -4484,7 +4515,7 @@ async function createPaidPlatformOrder(
   }
 
   const templateOptions =
-    template.slug === "rap_in_car"
+    template.slug === "rap_in_car" || template.slug === "rap_in_studio"
       ? { rapper_outfit: requestedTemplateOptions?.rapper_outfit === true }
       : template.slug === "popstar"
         ? { keep_guard: requestedTemplateOptions?.keep_guard === true }
