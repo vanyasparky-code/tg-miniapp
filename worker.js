@@ -214,6 +214,49 @@ function getTemplateRequiredPhotoCount(template, templateOptions = {}) {
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
+const RAP_IN_STUDIO_VIDEO_VARIANTS = Object.freeze({
+  horizontal: Object.freeze({
+    label: "Горизонтальный",
+    aspect_ratio: "16:9",
+    duration: 24,
+    source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-source.mp4`,
+  }),
+  vertical: Object.freeze({
+    label: "Вертикальный",
+    aspect_ratio: "9:16",
+    duration: 30,
+    source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-source-vertical.mp4`,
+  }),
+});
+
+function getRapInStudioVideoVariant(templateOptions = {}) {
+  const orientation =
+    templateOptions?.video_orientation === "vertical"
+      ? "vertical"
+      : "horizontal";
+
+  return RAP_IN_STUDIO_VIDEO_VARIANTS[orientation];
+}
+
+function getTemplateSourceVideoUrl(template, templateOptions = {}) {
+  if (template?.slug === "rap_in_studio") {
+    return getRapInStudioVideoVariant(templateOptions).source_video_url;
+  }
+
+  return (
+    TEMPLATE_GENERATION_VIDEO_OVERRIDES[template?.slug] ||
+    template?.source_video_url ||
+    ""
+  );
+}
+
+function getTemplateDurationSeconds(template, templateOptions = {}) {
+  if (template?.slug === "rap_in_studio") {
+    return getRapInStudioVideoVariant(templateOptions).duration;
+  }
+
+  return Number(template?.duration || 0);
+}
 const SUPPORT_URL =
   process.env.SUPPORT_URL || "https://t.me/redaktop_support_bot";
 const CHANNEL_URL = "https://t.me/neuro_video_repeat";
@@ -2489,9 +2532,7 @@ async function processGenjutsuTemplateOrder(order, template) {
   }
 
   const sourceVideoUrl = String(
-    TEMPLATE_GENERATION_VIDEO_OVERRIDES[template.slug] ||
-      template.source_video_url ||
-      ""
+    getTemplateSourceVideoUrl(template, order.template_options)
   ).trim();
 
   if (!sourceVideoUrl) {
@@ -2514,7 +2555,11 @@ async function processGenjutsuTemplateOrder(order, template) {
     .from("orders")
     .update({
       status: "processing",
-      price_rub: getTemplateTokenPrice(template, resolution),
+      price_rub: getTemplateTokenPrice(
+        template,
+        resolution,
+        order.template_options
+      ),
       updated_at: now,
     })
     .eq("id", order.id);
@@ -4356,6 +4401,10 @@ async function getPlatformCatalog() {
       publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
     }
 
+    if (template.slug === "rap_in_studio") {
+      publicTemplate.video_variants = RAP_IN_STUDIO_VIDEO_VARIANTS;
+    }
+
     if (template.generation_mode === "seedance_2_5_edit_template") {
       publicTemplate.resolution = "480p";
       publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
@@ -4411,7 +4460,11 @@ async function getPlatformAccount(telegramUser) {
   };
 }
 
-function getTemplateTokenPrice(template, resolution = "480p") {
+function getTemplateTokenPrice(
+  template,
+  resolution = "480p",
+  templateOptions = {}
+) {
   if (template?.generation_mode === "seedance_2_5_edit_template") {
     const basePrice = Math.ceil(Number(template?.price_rub));
     const baseResolution = String(template?.resolution || "480p");
@@ -4447,7 +4500,10 @@ function getTemplateTokenPrice(template, resolution = "480p") {
   }
 
   if (template?.generation_mode === "genjutsu_motion_template") {
-    return calculateGenjutsuPricing(template.duration, resolution).priceTokens;
+    return calculateGenjutsuPricing(
+      getTemplateDurationSeconds(template, templateOptions),
+      resolution
+    ).priceTokens;
   }
 
   const priceTokens = basePrice;
@@ -4515,11 +4571,19 @@ async function createPaidPlatformOrder(
   }
 
   const templateOptions =
-    template.slug === "rap_in_car" || template.slug === "rap_in_studio"
+    template.slug === "rap_in_car"
       ? { rapper_outfit: requestedTemplateOptions?.rapper_outfit === true }
-      : template.slug === "popstar"
-        ? { keep_guard: requestedTemplateOptions?.keep_guard === true }
-        : {};
+      : template.slug === "rap_in_studio"
+        ? {
+            rapper_outfit: requestedTemplateOptions?.rapper_outfit === true,
+            video_orientation:
+              requestedTemplateOptions?.video_orientation === "vertical"
+                ? "vertical"
+                : "horizontal",
+          }
+        : template.slug === "popstar"
+          ? { keep_guard: requestedTemplateOptions?.keep_guard === true }
+          : {};
   const requiredPhotoCount = getTemplateRequiredPhotoCount(
     template,
     templateOptions
@@ -4548,7 +4612,11 @@ async function createPaidPlatformOrder(
     );
   }
 
-  const priceTokens = getTemplateTokenPrice(template, selectedResolution);
+  const priceTokens = getTemplateTokenPrice(
+    template,
+    selectedResolution,
+    templateOptions
+  );
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < priceTokens) {
