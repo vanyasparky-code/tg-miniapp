@@ -3,22 +3,44 @@ create table if not exists public.custom_generations (
   user_id uuid not null references public.app_users(id) on delete restrict,
   telegram_user_id text not null,
   model_key text not null check (
-    model_key in ('genjutsu_motion', 'genjutsu_object', 'genjutsu_restyle')
+    model_key in (
+      'genjutsu_motion',
+      'genjutsu_object',
+      'genjutsu_restyle',
+      'seedance_2_reference',
+      'seedance_2_5_text',
+      'seedance_2_5_image',
+      'seedance_2_5_reference',
+      'seedance_2_5_edit'
+    )
   ),
   model_id text not null,
   status text not null default 'queued' check (
     status in ('queued', 'processing', 'completed', 'failed', 'subscription_required')
   ),
   prompt text,
-  video_url text not null,
+  video_url text,
   image_urls jsonb not null default '[]'::jsonb,
-  resolution text not null check (resolution in ('480p', '720p', '1080p')),
+  resolution text not null check (resolution in ('480p', '720p', '1080p', '4k')),
   preset_id text,
-  source_duration_seconds numeric(10, 3) not null check (source_duration_seconds >= 4),
+  duration integer not null default 5 check (duration between 4 and 30),
+  aspect_ratio text not null default '16:9' check (
+    aspect_ratio in ('16:9', '4:3', '1:1', '3:4', '9:16', '21:9')
+  ),
+  bitrate_mode text not null default 'high' check (
+    bitrate_mode in ('standard', 'high')
+  ),
+  output_format text not null default 'mp4' check (
+    output_format in ('mp4', 'mov')
+  ),
+  generate_audio boolean not null default true,
+  source_duration_seconds numeric(10, 3) not null default 0 check (
+    source_duration_seconds >= 0
+  ),
   source_width integer,
   source_height integer,
   source_size_bytes bigint,
-  billed_seconds integer not null check (billed_seconds between 4 and 30),
+  billed_seconds integer not null check (billed_seconds >= 4),
   provider_cost_usd numeric(14, 6) not null check (provider_cost_usd > 0),
   usd_rub_rate numeric(12, 4) not null check (usd_rub_rate > 0),
   markup_multiplier numeric(8, 4) not null default 2 check (markup_multiplier = 2),

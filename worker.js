@@ -95,6 +95,95 @@ const GENJUTSU_MODELS = Object.freeze({
     requiresPreset: true,
   },
 });
+const SEEDANCE_MODELS = Object.freeze({
+  seedance_2_reference: Object.freeze({
+    label: "Seedance 2.0 · Reference to Video",
+    modelId: "bytedance/seedance-2.0/reference-to-video",
+    workflow: "seedance_reference",
+    version: "2.0",
+    minImages: 0,
+    maxImages: 9,
+    maxDuration: 15,
+    allowsVideo: true,
+    requiresMedia: true,
+  }),
+  seedance_2_5_text: Object.freeze({
+    label: "Seedance 2.5 · Text to Video",
+    modelId: "bytedance/seedance-2.5/text-to-video",
+    workflow: "seedance_text",
+    version: "2.5",
+    minImages: 0,
+    maxImages: 0,
+    maxDuration: 30,
+    requiresPrompt: true,
+  }),
+  seedance_2_5_image: Object.freeze({
+    label: "Seedance 2.5 · Image to Video",
+    modelId: "bytedance/seedance-2.5/image-to-video",
+    workflow: "seedance_image",
+    version: "2.5",
+    minImages: 1,
+    maxImages: 2,
+    maxDuration: 30,
+  }),
+  seedance_2_5_reference: Object.freeze({
+    label: "Seedance 2.5 · Reference to Video",
+    modelId: "bytedance/seedance-2.5/reference-to-video",
+    workflow: "seedance_reference",
+    version: "2.5",
+    minImages: 0,
+    maxImages: 30,
+    maxDuration: 30,
+    allowsVideo: true,
+    requiresMedia: true,
+  }),
+  seedance_2_5_edit: Object.freeze({
+    label: "Seedance 2.5 · Video Edit",
+    modelId: "bytedance/seedance-2.5/video-edit",
+    workflow: "seedance_edit",
+    version: "2.5",
+    minImages: 0,
+    maxImages: 30,
+    allowsVideo: true,
+    requiresVideo: true,
+    requiresPrompt: true,
+  }),
+});
+const CUSTOM_VIDEO_MODELS = Object.freeze({
+  ...GENJUTSU_MODELS,
+  ...SEEDANCE_MODELS,
+});
+const SEEDANCE_USD_RUB_RATE = 100;
+const SEEDANCE_RETAIL_MULTIPLIER = 2;
+const SEEDANCE_FPS = 24;
+const SEEDANCE_DURATION_MIN = 4;
+const SEEDANCE_DURATION_MAX = 15;
+const SEEDANCE_RATES_USD_PER_1000_TOKENS = Object.freeze({
+  "2.0": Object.freeze({
+    standard: Object.freeze({ default: 0.014, "4k": 0.008 }),
+    withVideo: Object.freeze({ default: 0.0084, "4k": 0.0048 }),
+  }),
+  "2.5": Object.freeze({
+    standard: Object.freeze({ default: 0.0214, "1080p": 0.0234 }),
+    withVideo: Object.freeze({ default: 0.01284, "1080p": 0.01404 }),
+  }),
+});
+const SEEDANCE_RESOLUTION_SHORT_EDGE = Object.freeze({
+  "480p": 480,
+  "720p": 720,
+  "1080p": 1080,
+  "4k": 2160,
+});
+const SEEDANCE_ASPECT_RATIOS = Object.freeze([
+  "16:9",
+  "4:3",
+  "1:1",
+  "3:4",
+  "9:16",
+  "21:9",
+]);
+const POPSTAR_SOURCE_DURATION_SECONDS = 25;
+const POPSTAR_OUTPUT_DURATION_SECONDS = POPSTAR_SOURCE_DURATION_SECONDS;
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
 const RAP_IN_CAR_IDENTITY_PROMPT =
   "Strictly preserve the exact identity and natural appearance of every person from the uploaded reference images throughout the entire video. Each reference image represents one separate person: never blend, average, merge, or exchange facial or body features between people, and never mix them with the original actors. Reproduce each person's recognizable face exactly, including face shape, head shape, eyes, eyebrows, nose, lips, jawline, cheeks, ears, skin tone, facial hair, hairline, hairstyle, and hair color. Preserve each person's exact natural body parameters from their own reference: apparent height, weight, body build, shoulder width, chest, waist, neck, arms, legs, and overall proportions. Do not make anyone thinner, heavier, taller, shorter, younger, older, more muscular, or differently proportioned. Keep all identities, faces, and body proportions stable in every frame, including head turns, profile views, open-mouth singing, gestures, and motion blur. No face morphing, identity drift, hybrid faces, duplicated faces, or body-shape drift. Keep the existing character positions, actions, motion, timing, car interior, camera, framing, and lighting unchanged.";
@@ -177,19 +266,25 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте главным героем звёздной вечеринки.",
     video_prompt: POPSTAR_PROMPT,
     photo_prompt: "",
-    price_rub: 1,
+    price_rub: calculateSeedancePricing({
+      version: "2.5",
+      inputVideoSeconds: POPSTAR_SOURCE_DURATION_SECONDS,
+      generatedVideoSeconds: POPSTAR_OUTPUT_DURATION_SECONDS,
+      resolution: "480p",
+      aspectRatio: "16:9",
+    }).priceTokens,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
     source_video_url: `${MINI_APP_URL}/assets/templates/popstar-source.mp4`,
-    generation_mode: "genjutsu_motion_template",
+    generation_mode: "seedance_2_5_edit_template",
     required_photo_count: 2,
     photo_rules: ["Исполнитель", "Охранник"],
     available_resolutions: ["480p", "720p", "1080p"],
     photo_model: "none",
-    video_model: "genjutsu_motion",
+    video_model: "seedance_2_5_edit",
     aspect_ratio: "16:9",
-    duration: 29,
+    duration: POPSTAR_SOURCE_DURATION_SECONDS,
     resolution: "480p",
   }),
 ]);
@@ -234,6 +329,96 @@ function calculateGenerationRetailPrice(
     multiplier: normalizedMultiplier,
     retailPriceRub: Number(retailPriceRub.toFixed(2)),
     priceTokens,
+  };
+}
+
+function getSeedanceOutputDimensions(resolution, aspectRatio) {
+  const shortEdge = SEEDANCE_RESOLUTION_SHORT_EDGE[resolution];
+  const [ratioWidth, ratioHeight] = String(aspectRatio || "16:9")
+    .split(":")
+    .map(Number);
+
+  if (
+    !shortEdge ||
+    !Number.isFinite(ratioWidth) ||
+    !Number.isFinite(ratioHeight) ||
+    ratioWidth <= 0 ||
+    ratioHeight <= 0
+  ) {
+    throw createHttpError(
+      "Не удалось определить размер видео Seedance",
+      400,
+      "INVALID_SEEDANCE_FORMAT"
+    );
+  }
+
+  const roundEven = (value) => Math.max(2, Math.round(value / 2) * 2);
+
+  if (ratioWidth >= ratioHeight) {
+    return {
+      width: roundEven(shortEdge * (ratioWidth / ratioHeight)),
+      height: shortEdge,
+    };
+  }
+
+  return {
+    width: shortEdge,
+    height: roundEven(shortEdge * (ratioHeight / ratioWidth)),
+  };
+}
+
+function calculateSeedancePricing({
+  version,
+  inputVideoSeconds = 0,
+  generatedVideoSeconds,
+  resolution,
+  aspectRatio = "16:9",
+}) {
+  const inputDuration = Math.max(0, Number(inputVideoSeconds) || 0);
+  const generatedDuration = Number(generatedVideoSeconds);
+  const rateConfig = SEEDANCE_RATES_USD_PER_1000_TOKENS[version];
+  const dimensions = getSeedanceOutputDimensions(resolution, aspectRatio);
+
+  if (
+    !rateConfig ||
+    !Number.isFinite(generatedDuration) ||
+    generatedDuration < SEEDANCE_DURATION_MIN
+  ) {
+    throw createHttpError(
+      "Не удалось рассчитать стоимость Seedance",
+      400,
+      "INVALID_VIDEO_PRICING"
+    );
+  }
+
+  const rateGroup = inputDuration > 0 ? rateConfig.withVideo : rateConfig.standard;
+  const rateUsdPerThousand = rateGroup[resolution] || rateGroup.default;
+  const billableDurationSeconds = inputDuration + generatedDuration;
+  const billableVideoTokens = Math.ceil(
+    (billableDurationSeconds * dimensions.width * dimensions.height * SEEDANCE_FPS) /
+      1024
+  );
+  const providerCostUsd = Number(
+    ((billableVideoTokens / 1000) * rateUsdPerThousand).toFixed(6)
+  );
+  const pricing = calculateGenerationRetailPrice(
+    providerCostUsd,
+    SEEDANCE_USD_RUB_RATE,
+    SEEDANCE_RETAIL_MULTIPLIER
+  );
+
+  return {
+    ...pricing,
+    version,
+    resolution,
+    aspectRatio,
+    width: dimensions.width,
+    height: dimensions.height,
+    inputVideoSeconds: inputDuration,
+    generatedVideoSeconds: generatedDuration,
+    billableDurationSeconds: Number(billableDurationSeconds.toFixed(3)),
+    billableVideoTokens,
+    rateUsdPerThousand,
   };
 }
 
@@ -2410,6 +2595,134 @@ async function processGenjutsuTemplateOrder(order, template) {
   }
 }
 
+async function processSeedanceEditTemplateOrder(order, template) {
+  const photoUrls = getOrderPhotoUrls(order);
+  const requiredPhotoCount = getTemplateRequiredPhotoCount(
+    template,
+    order.template_options
+  );
+
+  if (photoUrls.length !== requiredPhotoCount) {
+    throw new Error(
+      `Template ${template.slug} requires exactly ${requiredPhotoCount} photos`
+    );
+  }
+
+  const sourceVideoUrl = String(template.source_video_url || "").trim();
+
+  if (!sourceVideoUrl) {
+    throw new Error(`Template source video is missing: ${template.slug}`);
+  }
+
+  const availableResolutions = Array.isArray(template.available_resolutions)
+    ? template.available_resolutions.map(String)
+    : [String(template.resolution || "720p")];
+  const resolution = String(
+    order.selected_resolution || template.resolution || "720p"
+  );
+
+  if (!availableResolutions.includes(resolution) || resolution === "4k") {
+    throw new Error(`Unsupported template resolution: ${resolution}`);
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("orders")
+    .update({
+      status: "processing",
+      price_rub: getTemplateTokenPrice(template, resolution),
+      updated_at: now,
+    })
+    .eq("id", order.id);
+
+  if (!order.bot_prepare_message_sent) {
+    const prepareSent = await sendTelegramPreparingMessage(order);
+
+    if (prepareSent) {
+      await supabase
+        .from("orders")
+        .update({
+          bot_prepare_message_sent: true,
+          bot_prepare_message_sent_at: now,
+          updated_at: now,
+        })
+        .eq("id", order.id);
+    }
+  }
+
+  let requestId = order.provider_request_id;
+  let statusUrl = order.provider_status_url;
+
+  if (!requestId) {
+    const prompt =
+      order.template_options?.keep_guard === true
+        ? POPSTAR_PERFORMER_ONLY_PROMPT
+        : POPSTAR_PROMPT;
+    const request = await createGeneration(
+      SEEDANCE_MODELS.seedance_2_5_edit.modelId,
+      {
+        prompt,
+        video_url: sourceVideoUrl,
+        image_urls: photoUrls,
+        resolution,
+        bitrate_mode: "high",
+        generate_audio: true,
+      }
+    );
+    requestId = request.generationId;
+    statusUrl = request.statusUrl;
+
+    const { error: requestSaveError } = await supabase
+      .from("orders")
+      .update({
+        provider_request_id: requestId,
+        provider_status_url: statusUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+
+    if (requestSaveError) {
+      throw new Error(
+        `Failed to save Seedance template request: ${requestSaveError.message}`
+      );
+    }
+  }
+
+  const videoUrl = await pollGeneration(
+    requestId,
+    statusUrl,
+    GENJUTSU_POLL_TIMEOUT_MS
+  );
+  const completedAt = new Date().toISOString();
+  const { error: completeError } = await supabase
+    .from("orders")
+    .update({
+      status: "completed",
+      video_url: videoUrl,
+      error_message: null,
+      updated_at: completedAt,
+    })
+    .eq("id", order.id);
+
+  if (completeError) {
+    throw new Error(`Failed to save Seedance result: ${completeError.message}`);
+  }
+
+  try {
+    await sendTelegramVideo(order.telegram_user_id, videoUrl);
+    await supabase
+      .from("orders")
+      .update({
+        bot_message_sent: true,
+        bot_message_sent_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+  } catch (error) {
+    console.error("Seedance template delivery failed:", order.id, error.message);
+  }
+}
+
 async function processOrder(order) {
   console.log("Processing order:", order.id);
 
@@ -2472,6 +2785,11 @@ async function processOrder(order) {
 
   if (template.generation_mode === "genjutsu_motion_template") {
     await processGenjutsuTemplateOrder(order, template);
+    return;
+  }
+
+  if (template.generation_mode === "seedance_2_5_edit_template") {
+    await processSeedanceEditTemplateOrder(order, template);
     return;
   }
 
@@ -2713,25 +3031,84 @@ async function refundCustomGenerationTokens(generation, reason) {
   return Array.isArray(data) ? data[0] : data;
 }
 
-function buildGenjutsuPayload(generation) {
-  const payload = {
-    video_url: generation.video_url,
-    resolution: generation.resolution,
-  };
+function buildCustomGenerationPayload(generation) {
+  const model = CUSTOM_VIDEO_MODELS[generation.model_key];
   const imageUrls = Array.isArray(generation.image_urls)
     ? generation.image_urls
     : [];
 
-  if (imageUrls.length) {
-    payload.image_urls = imageUrls;
+  if (!model?.workflow) {
+    const payload = {
+      video_url: generation.video_url,
+      resolution: generation.resolution,
+    };
+
+    if (imageUrls.length) {
+      payload.image_urls = imageUrls;
+    }
+
+    if (generation.prompt) {
+      payload.prompt = generation.prompt;
+    }
+
+    if (generation.model_key === "genjutsu_restyle") {
+      payload.preset_id = generation.preset_id;
+    }
+
+    return payload;
   }
+
+  const payload = {
+    resolution: generation.resolution,
+    bitrate_mode: generation.bitrate_mode || "high",
+    generate_audio: generation.generate_audio !== false,
+  };
 
   if (generation.prompt) {
     payload.prompt = generation.prompt;
   }
 
-  if (generation.model_key === "genjutsu_restyle") {
-    payload.preset_id = generation.preset_id;
+  if (model.workflow === "seedance_text") {
+    payload.duration = generation.duration;
+    payload.aspect_ratio = generation.aspect_ratio || "16:9";
+    payload.output_format = generation.output_format || "mp4";
+    return payload;
+  }
+
+  if (model.workflow === "seedance_image") {
+    payload.duration = generation.duration;
+    payload.image_url = imageUrls[0];
+
+    if (imageUrls[1]) {
+      payload.end_image_url = imageUrls[1];
+    }
+
+    return payload;
+  }
+
+  if (model.workflow === "seedance_reference") {
+    payload.duration = generation.duration;
+    payload.aspect_ratio = generation.aspect_ratio || "16:9";
+
+    if (model.version === "2.0") {
+      delete payload.bitrate_mode;
+    }
+
+    if (imageUrls.length) {
+      payload.image_urls = imageUrls;
+    }
+
+    if (generation.video_url) {
+      payload.video_urls = [generation.video_url];
+    }
+
+    return payload;
+  }
+
+  payload.video_url = generation.video_url;
+
+  if (imageUrls.length) {
+    payload.image_urls = imageUrls;
   }
 
   return payload;
@@ -2794,7 +3171,7 @@ async function processCustomGeneration(generation) {
   if (!requestId) {
     const request = await createGeneration(
       generation.model_id,
-      buildGenjutsuPayload(generation)
+      buildCustomGenerationPayload(generation)
     );
     requestId = request.generationId;
     statusUrl = request.statusUrl;
@@ -3954,6 +4331,19 @@ async function getPlatformCatalog() {
       publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
     }
 
+    if (template.generation_mode === "seedance_2_5_edit_template") {
+      publicTemplate.resolution = "480p";
+      publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
+      publicTemplate.price_tokens_by_resolution = Object.fromEntries(
+        (template.available_resolutions || ["480p", "720p", "1080p"]).map(
+          (resolution) => [
+            resolution,
+            getTemplateTokenPrice(template, resolution),
+          ]
+        )
+      );
+    }
+
     return publicTemplate;
   });
 
@@ -3967,6 +4357,15 @@ async function getPlatformCatalog() {
       genjutsu: {
         price_rub_per_second: genjutsuPriceRubPerSecond,
         duration_rounding: "ceil_after_trim_to_30_seconds",
+      },
+      seedance: {
+        usd_rub_rate: SEEDANCE_USD_RUB_RATE,
+        retail_multiplier: SEEDANCE_RETAIL_MULTIPLIER,
+        token_value_rub: TOKEN_VALUE_RUB,
+        fps: SEEDANCE_FPS,
+        resolution_short_edge: SEEDANCE_RESOLUTION_SHORT_EDGE,
+        rates_usd_per_1000_video_tokens:
+          SEEDANCE_RATES_USD_PER_1000_TOKENS,
       },
     },
   };
@@ -3988,6 +4387,18 @@ async function getPlatformAccount(telegramUser) {
 }
 
 function getTemplateTokenPrice(template, resolution = "480p") {
+  if (template?.generation_mode === "seedance_2_5_edit_template") {
+    return calculateSeedancePricing({
+      version: "2.5",
+      inputVideoSeconds: Number(template.duration || POPSTAR_SOURCE_DURATION_SECONDS),
+      generatedVideoSeconds: Number(
+        template.duration || POPSTAR_OUTPUT_DURATION_SECONDS
+      ),
+      resolution,
+      aspectRatio: template.aspect_ratio || "16:9",
+    }).priceTokens;
+  }
+
   const basePrice = Math.ceil(Number(template?.price_rub));
   const baseResolution = String(template?.resolution || "480p");
 
@@ -4220,7 +4631,7 @@ async function normalizeGenjutsuImageUrls(imageUrls, model, telegramUserId) {
 async function createPaidCustomGeneration(telegramUser, input) {
   const user = await upsertPlatformUser(telegramUser);
   const modelKey = String(input?.model_key || "").trim();
-  const model = GENJUTSU_MODELS[modelKey];
+  const model = CUSTOM_VIDEO_MODELS[modelKey];
 
   if (!model) {
     throw createHttpError(
@@ -4231,10 +4642,16 @@ async function createPaidCustomGeneration(telegramUser, input) {
   }
 
   const resolution = String(input?.resolution || "720p").trim();
+  const isSeedance = Boolean(model.workflow);
+  const allowedResolutions = isSeedance
+    ? model.version === "2.0"
+      ? Object.keys(SEEDANCE_RESOLUTION_SHORT_EDGE)
+      : ["480p", "720p", "1080p"]
+    : Object.keys(GENJUTSU_RATES_USD);
 
-  if (!GENJUTSU_RATES_USD[resolution]) {
+  if (!allowedResolutions.includes(resolution)) {
     throw createHttpError(
-      "Выберите разрешение 480p, 720p или 1080p",
+      `Выберите разрешение ${allowedResolutions.join(", ")}`,
       400,
       "INVALID_RESOLUTION"
     );
@@ -4250,17 +4667,47 @@ async function createPaidCustomGeneration(telegramUser, input) {
     );
   }
 
-  const videoUrl = normalizeUploadedMediaUrl(
-    input?.video_url,
-    "Видео",
-    user.telegram_user_id
-  );
+  if (model.requiresPrompt && !prompt) {
+    throw createHttpError(
+      "Для этой модели нужен промпт",
+      400,
+      "PROMPT_REQUIRED"
+    );
+  }
+
+  const videoUrl = input?.video_url
+    ? normalizeUploadedMediaUrl(
+        input.video_url,
+        "Видео",
+        user.telegram_user_id
+      )
+    : null;
   const imageUrls = await normalizeGenjutsuImageUrls(
     input?.image_urls,
     model,
     user.telegram_user_id
   );
-  const video = await probeVideoUrl(videoUrl);
+  const requiresVideo = !isSeedance || model.requiresVideo;
+
+  if (requiresVideo && !videoUrl) {
+    throw createHttpError(
+      "Добавьте исходное видео",
+      400,
+      "VIDEO_REQUIRED"
+    );
+  }
+
+  if (model.requiresMedia && !videoUrl && imageUrls.length === 0) {
+    throw createHttpError(
+      "Добавьте хотя бы одно изображение или видео",
+      400,
+      "REFERENCE_REQUIRED"
+    );
+  }
+
+  const video = videoUrl
+    ? await probeVideoUrl(videoUrl)
+    : { duration: 0, width: null, height: null, size: null };
 
   if (
     model.minimumPixels &&
@@ -4288,8 +4735,60 @@ async function createPaidCustomGeneration(telegramUser, input) {
     }
   }
 
-  const pricing = calculateGenjutsuPricing(video.duration, resolution);
-  const billedSeconds = pricing.billedSeconds;
+  const requestedDuration = Number(input?.duration || 5);
+  const duration = model.workflow === "seedance_edit"
+    ? Math.max(
+        SEEDANCE_DURATION_MIN,
+        Math.min(30, Math.ceil(video.duration || SEEDANCE_DURATION_MIN))
+      )
+    : isSeedance
+      ? requestedDuration
+      : Math.ceil(Math.min(video.duration, 30));
+
+  if (
+    isSeedance &&
+    model.workflow !== "seedance_edit" &&
+    (!Number.isInteger(duration) ||
+      duration < SEEDANCE_DURATION_MIN ||
+      duration > model.maxDuration)
+  ) {
+    throw createHttpError(
+      `Выберите длительность от ${SEEDANCE_DURATION_MIN} до ${model.maxDuration} секунд`,
+      400,
+      "INVALID_DURATION"
+    );
+  }
+
+  const aspectRatio = String(input?.aspect_ratio || "16:9");
+
+  if (
+    isSeedance &&
+    ["seedance_text", "seedance_reference"].includes(model.workflow) &&
+    !SEEDANCE_ASPECT_RATIOS.includes(aspectRatio)
+  ) {
+    throw createHttpError(
+      "Выберите доступный формат видео",
+      400,
+      "INVALID_ASPECT_RATIO"
+    );
+  }
+
+  const bitrateMode = input?.bitrate_mode === "standard" ? "standard" : "high";
+  const outputFormat = input?.output_format === "mov" ? "mov" : "mp4";
+  const generateAudio = input?.generate_audio !== false;
+  const pricing = isSeedance
+    ? calculateSeedancePricing({
+        version: model.version,
+        inputVideoSeconds: video.duration,
+        generatedVideoSeconds:
+          model.workflow === "seedance_edit" ? video.duration : duration,
+        resolution,
+        aspectRatio,
+      })
+    : calculateGenjutsuPricing(video.duration, resolution);
+  const billedSeconds = isSeedance
+    ? Math.ceil(pricing.billableDurationSeconds)
+    : pricing.billedSeconds;
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < pricing.priceTokens) {
@@ -4318,6 +4817,11 @@ async function createPaidCustomGeneration(telegramUser, input) {
     image_urls: imageUrls,
     resolution,
     preset_id: presetId,
+    duration,
+    aspect_ratio: aspectRatio,
+    bitrate_mode: bitrateMode,
+    output_format: outputFormat,
+    generate_audio: generateAudio,
     source_duration_seconds: Number(video.duration.toFixed(3)),
     source_width: video.width || null,
     source_height: video.height || null,
@@ -4325,7 +4829,9 @@ async function createPaidCustomGeneration(telegramUser, input) {
     billed_seconds: billedSeconds,
     provider_cost_usd: pricing.providerCostUsd,
     usd_rub_rate: pricing.usdRubRate,
-    markup_multiplier: GENJUTSU_RETAIL_MULTIPLIER,
+    markup_multiplier: isSeedance
+      ? SEEDANCE_RETAIL_MULTIPLIER
+      : GENJUTSU_RETAIL_MULTIPLIER,
     retail_price_rub: pricing.retailPriceRub,
     charged_tokens: pricing.priceTokens,
     error_message: "Awaiting token reservation",
@@ -4454,7 +4960,7 @@ async function getPlatformHistory(telegramUser) {
     kind: "custom",
     created_at: generation.created_at,
     template_slug:
-      GENJUTSU_MODELS[generation.model_key]?.label || generation.model_key,
+      CUSTOM_VIDEO_MODELS[generation.model_key]?.label || generation.model_key,
     title: "Видео, созданное с нуля",
     status: generation.status,
     paid: true,

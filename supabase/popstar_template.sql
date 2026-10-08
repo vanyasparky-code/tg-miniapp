@@ -34,19 +34,19 @@ insert into public.templates (
   'Станьте главным героем звёздной вечеринки.',
   'Replace only the main performer with the person from image 1 and the security guard with the person from image 2. Keep image 1 and image 2 as two separate, stable identities throughout the video. Keep every other person unchanged. Preserve the original camera movement, cuts, timing, actions, facial expressions, clothing, props, lighting, locations, background, and audio. At 14 seconds, preserve the original phone handoff from the performer to the security guard. Do not add, remove, merge, or duplicate people. Photorealistic live-action.',
   '',
-  1,
+  1234,
   true,
   'https://tg-miniapp-liart.vercel.app/assets/templates/popstar-cover.jpg',
   'https://tg-miniapp-liart.vercel.app/assets/templates/popstar-preview.mp4',
   'https://tg-miniapp-liart.vercel.app/assets/templates/popstar-source.mp4',
-  'genjutsu_motion_template',
+  'seedance_2_5_edit_template',
   2,
   '["Исполнитель", "Охранник"]'::jsonb,
   '["480p", "720p", "1080p"]'::jsonb,
   'none',
-  'genjutsu_motion',
+  'seedance_2_5_edit',
   '16:9',
-  29,
+  25,
   '480p'
 )
 on conflict (slug) do update set
