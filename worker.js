@@ -266,13 +266,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте главным героем звёздной вечеринки.",
     video_prompt: POPSTAR_PROMPT,
     photo_prompt: "",
-    price_rub: calculateSeedancePricing({
-      version: "2.5",
-      inputVideoSeconds: POPSTAR_SOURCE_DURATION_SECONDS,
-      generatedVideoSeconds: POPSTAR_OUTPUT_DURATION_SECONDS,
-      resolution: "480p",
-      aspectRatio: "16:9",
-    }).priceTokens,
+    price_rub: 1,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
@@ -4388,6 +4382,17 @@ async function getPlatformAccount(telegramUser) {
 
 function getTemplateTokenPrice(template, resolution = "480p") {
   if (template?.generation_mode === "seedance_2_5_edit_template") {
+    const basePrice = Math.ceil(Number(template?.price_rub));
+    const baseResolution = String(template?.resolution || "480p");
+
+    if (
+      String(resolution) === baseResolution &&
+      Number.isFinite(basePrice) &&
+      basePrice > 0
+    ) {
+      return basePrice;
+    }
+
     return calculateSeedancePricing({
       version: "2.5",
       inputVideoSeconds: Number(template.duration || POPSTAR_SOURCE_DURATION_SECONDS),

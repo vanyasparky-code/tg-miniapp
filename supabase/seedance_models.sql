@@ -56,6 +56,7 @@ update public.templates
 set
   generation_mode = 'seedance_2_5_edit_template',
   video_model = 'seedance_2_5_edit',
+  price_rub = 1,
   duration = 25,
   resolution = '480p',
   available_resolutions = '["480p", "720p", "1080p"]'::jsonb

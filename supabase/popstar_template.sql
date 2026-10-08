@@ -34,7 +34,7 @@ insert into public.templates (
   'Станьте главным героем звёздной вечеринки.',
   'Replace only the main performer with the person from image 1 and the security guard with the person from image 2. Keep image 1 and image 2 as two separate, stable identities throughout the video. Keep every other person unchanged. Preserve the original camera movement, cuts, timing, actions, facial expressions, clothing, props, lighting, locations, background, and audio. At 14 seconds, preserve the original phone handoff from the performer to the security guard. Do not add, remove, merge, or duplicate people. Photorealistic live-action.',
   '',
-  1234,
+  1,
   true,
   'https://tg-miniapp-liart.vercel.app/assets/templates/popstar-cover.jpg',
   'https://tg-miniapp-liart.vercel.app/assets/templates/popstar-preview.mp4',
