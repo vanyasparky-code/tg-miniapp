@@ -106,6 +106,16 @@ const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
 const POPSTAR_PROMPT =
   "Edit the uploaded source video and replace only the main performer and the security guard. Image 1 replaces the main performer in every shot. Image 2 replaces the security guard in every shot where the guard appears. Keep each reference as one separate person and strictly preserve their exact recognizable identity, facial structure, hair, skin tone, age, natural body build, height, weight, proportions, clothing, and accessories throughout the entire video. Never blend, swap, average, or combine their features with each other or with the original actors. No face morphing, identity drift, body-shape drift, duplicated faces, flicker, or warping. Keep the pop-art frame beside the stairs identical to the source video in size, proportions, position, perspective, lighting, and occluded areas. It must be a static 2x2 grid showing the same front-facing portrait of the performer from image 1 in all four quadrants with the same composition, changing only the colors: top left has a purple background and yellow-orange face; top right has a yellow background and blue-green face; bottom left has a light green background, green-yellow face, and dark blue accents; bottom right has a blue background, light mint face, and pink accents. Do not use abstract art, the original actor's face, or four different people. At exactly 14 seconds, while walking down the stairs, the performer must throw the mobile phone directly into the security guard's hands, and the security guard must naturally catch and hold it. Clearly show the complete hand-to-hand transfer: the performer's throwing motion, the exact moment the phone visibly leaves the performer's hand, the phone's continuous trajectory toward the guard, the guard reaching for it, and the phone landing securely in the guard's hands. The phone must not disappear, remain in the performer's hand, fall to the floor, or miss the guard. The performer's other hand must continue holding the bottle exactly as in the source. Preserve all background guests and women from the original video with their identities, clothing, approximate positions, and individual natural movements. Keep every original step, gesture, head turn, raised hand, glass movement, and dance active and natural at the entrance, in the hallway, on the stairs, and by the pool. Do not freeze background people, synchronize their dancing, add people, remove people, or make them follow one choreography. Preserve the original camera movement, shots, cuts, framing, duration, lighting, locations, props, acting, facial expressions, mouth movements, sound, timing, and action rhythm. Everything else must remain identical to the source video. Ultrarealistic live-action, no restyle and no new scenes.";
+const POPSTAR_PERFORMER_ONLY_PROMPT =
+  "Edit the uploaded source video and replace only the main performer. Image 1 replaces the main performer in every shot. Do not replace, alter, restyle, or apply image 1 to the security guard. Keep the original security guard exactly as shown in the source video, preserving the guard's original identity, face, hair, skin tone, body, proportions, clothing, accessories, performance, position, and movement in every frame. Strictly preserve the exact recognizable identity, facial structure, hair, skin tone, age, natural body build, height, weight, proportions, clothing, and accessories of the performer from image 1 throughout the entire video. Never blend the performer with the guard, background guests, or original actors. No face morphing, identity drift, body-shape drift, duplicated faces, flicker, or warping. Keep the pop-art frame beside the stairs identical to the source video in size, proportions, position, perspective, lighting, and occluded areas. It must be a static 2x2 grid showing the same front-facing portrait of the performer from image 1 in all four quadrants with the same composition, changing only the colors: top left has a purple background and yellow-orange face; top right has a yellow background and blue-green face; bottom left has a light green background, green-yellow face, and dark blue accents; bottom right has a blue background, light mint face, and pink accents. At exactly 14 seconds, preserve the original action in which the performer throws the mobile phone directly into the original security guard's hands and the guard naturally catches it. Clearly show the phone leaving the performer's hand, its continuous trajectory, the guard reaching for it, and the phone landing in the guard's hands. The performer's other hand must continue holding the bottle exactly as in the source. Preserve every background person, movement, camera move, shot, cut, framing, duration, lighting, location, prop, facial expression, mouth movement, sound, timing, and action rhythm from the source. Everything except the main performer's identity must remain identical to the source video. Ultrarealistic live-action, no restyle, no new scenes, and no extra characters.";
+
+function getTemplateRequiredPhotoCount(template, templateOptions = {}) {
+  if (template?.slug === "popstar" && templateOptions?.keep_guard === true) {
+    return 1;
+  }
+
+  return Math.max(1, Number(template?.required_photo_count || 1));
+}
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
 });
@@ -2261,9 +2271,9 @@ async function refundOrderTokens(order, reason) {
 
 async function processGenjutsuTemplateOrder(order, template) {
   const photoUrls = getOrderPhotoUrls(order);
-  const requiredPhotoCount = Math.max(
-    1,
-    Number(template.required_photo_count || 1)
+  const requiredPhotoCount = getTemplateRequiredPhotoCount(
+    template,
+    order.template_options
   );
 
   if (photoUrls.length !== requiredPhotoCount) {
@@ -2327,7 +2337,11 @@ async function processGenjutsuTemplateOrder(order, template) {
         ? order.template_options?.rapper_outfit === true
           ? RAP_IN_CAR_OUTFIT_PROMPT
           : RAP_IN_CAR_DEFAULT_PROMPT
-        : String(template.video_prompt || "").trim();
+        : template.slug === "popstar"
+          ? order.template_options?.keep_guard === true
+            ? POPSTAR_PERFORMER_ONLY_PROMPT
+            : POPSTAR_PROMPT
+          : String(template.video_prompt || "").trim();
     const generationInput = {
       video_url: sourceVideoUrl,
       image_urls: photoUrls,
@@ -4053,9 +4067,15 @@ async function createPaidPlatformOrder(
     throw createHttpError("Шаблон больше недоступен", 404, "TEMPLATE_NOT_FOUND");
   }
 
-  const requiredPhotoCount = Math.max(
-    1,
-    Number(template.required_photo_count || 1)
+  const templateOptions =
+    template.slug === "rap_in_car"
+      ? { rapper_outfit: requestedTemplateOptions?.rapper_outfit === true }
+      : template.slug === "popstar"
+        ? { keep_guard: requestedTemplateOptions?.keep_guard === true }
+        : {};
+  const requiredPhotoCount = getTemplateRequiredPhotoCount(
+    template,
+    templateOptions
   );
 
   if (normalizedPhotoUrls.length !== requiredPhotoCount) {
@@ -4082,10 +4102,6 @@ async function createPaidPlatformOrder(
   }
 
   const priceTokens = getTemplateTokenPrice(template, selectedResolution);
-  const templateOptions =
-    template.slug === "rap_in_car"
-      ? { rapper_outfit: requestedTemplateOptions?.rapper_outfit === true }
-      : {};
   const currentBalance = Number(user.balance_tokens || 0);
 
   if (currentBalance < priceTokens) {
