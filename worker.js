@@ -182,7 +182,7 @@ const SEEDANCE_ASPECT_RATIOS = Object.freeze([
   "9:16",
   "21:9",
 ]);
-const POPSTAR_SOURCE_DURATION_SECONDS = 25;
+const POPSTAR_SOURCE_DURATION_SECONDS = 30;
 const POPSTAR_OUTPUT_DURATION_SECONDS = POPSTAR_SOURCE_DURATION_SECONDS;
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
 const RAP_IN_CAR_IDENTITY_PROMPT =
@@ -199,10 +199,12 @@ const RAP_IN_STUDIO_OUTFIT_PROMPT =
   `${RAP_IN_STUDIO_IDENTITY_PROMPT} Change only the clothing and accessories into two distinct premium rap-performance outfits. Give the left performer and right performer different coordinated looks inspired by modern hip-hop studio fashion: oversized streetwear layers, varsity or leather jackets, graphic shirts or jerseys, relaxed baggy trousers, clean sneakers or boots, tasteful chains, rings, bracelets, and luxury watches. Keep accessories away from the eyes and do not obscure either face. Fit each outfit over the person's unchanged body without changing height, weight, build, shoulders, waist, limbs, or proportions. Do not change faces, skin, hair, age, pose, movement, or position.`;
 const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
+const POPSTAR_IDENTITY_PROMPT =
+  "Edit the uploaded source video while preserving its complete original sequence. Image 1 replaces only the main performer in light clothing at the front of the scene. Lock the exact recognizable identity from image 1 in every shot: preserve the face shape, head shape, eyes, eyebrows, nose, lips, jawline, ears, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, shoulder width, and natural body proportions. Never blend image 1 with the original actor or with any other person. Map image 1 precisely onto the original performer's head position, eye line, facial expressions, mouth movement, gestures, walking, stair descent, poses, timing, and interaction with all props. Preserve the clothing, footwear, jewelry, glasses, and accessories shown in image 1 consistently throughout the video. The static four-panel pop-art portrait beside the stairs must depict the same person from image 1 in all four panels while preserving the original panel layout, colors, size, position, perspective, lighting, and occlusion. Preserve the original camera movement, camera shake, framing, focus, cuts, duration, acting rhythm, villa interior, staircase, windows, lighting, party guests, background movement, props, shadows, and audio. Keep all unassigned people unchanged and moving naturally. Do not add, remove, merge, duplicate, or reposition people. Photorealistic live-action, stable identity, natural skin, no face morphing, no body-shape drift, no flicker, and no restyle.";
 const POPSTAR_PROMPT =
-  "Replace only the main performer with the person from image 1 and the security guard with the person from image 2. Keep image 1 and image 2 as two separate, stable identities throughout the video. Keep every other person unchanged. Preserve the original camera movement, cuts, timing, actions, facial expressions, clothing, props, lighting, locations, background, and audio. At 14 seconds, preserve the original phone handoff from the performer to the security guard. Do not add, remove, merge, or duplicate people. Photorealistic live-action.";
+  `${POPSTAR_IDENTITY_PROMPT} Image 2 replaces only the tall security guard dressed in black who follows the performer and appears behind him near the stairs. Lock the exact recognizable identity, face, hair, skin tone, age, height, weight, body build, and natural proportions from image 2 in every appearance. Preserve the clothing and accessories shown in image 2 consistently. Keep image 1 and image 2 as two completely separate identities: never swap, blend, merge, or average their facial or body features. Map image 2 only onto the original guard's position, posture, walking, gestures, timing, and interaction with the performer. Do not apply image 2 to the performer or any party guest.`;
 const POPSTAR_PERFORMER_ONLY_PROMPT =
-  "Replace only the main performer with the person from image 1. Keep the original security guard and every other person unchanged throughout the video. Do not apply image 1 to the security guard or any background person. Preserve the original camera movement, cuts, timing, actions, facial expressions, clothing, props, lighting, locations, background, and audio. At 14 seconds, preserve the original phone handoff from the performer to the original security guard. Do not add, remove, merge, or duplicate people. Keep the performer from image 1 visually consistent in every shot. Photorealistic live-action.";
+  `${POPSTAR_IDENTITY_PROMPT} Keep the original tall security guard dressed in black completely unchanged in every shot, including his face, body, clothing, position, walking, gestures, timing, and interaction with the performer. Do not apply image 1 to the security guard or to any party guest.`;
 
 function getTemplateRequiredPhotoCount(template, templateOptions = {}) {
   if (template?.slug === "popstar" && templateOptions?.keep_guard === true) {
@@ -341,12 +343,12 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
     source_video_url: `${MINI_APP_URL}/assets/templates/popstar-source.mp4`,
-    generation_mode: "seedance_2_5_edit_template",
+    generation_mode: "genjutsu_motion_template",
     required_photo_count: 2,
     photo_rules: ["Исполнитель", "Охранник"],
     available_resolutions: ["480p", "720p", "1080p"],
     photo_model: "none",
-    video_model: "seedance_2_5_edit",
+    video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
     duration: POPSTAR_SOURCE_DURATION_SECONDS,
     resolution: "480p",
