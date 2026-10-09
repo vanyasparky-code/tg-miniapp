@@ -24,7 +24,7 @@ insert into public.templates (
   'Запишите студийный рэп-перформанс со своими героями.',
   $prompt$Edit the uploaded source video and replace exactly the two performers. Image 1 must replace only the person on the left, and image 2 must replace only the person on the right. Keep image 1 and image 2 as two separate, stable identities and never blend, swap, merge, or average their facial or body features. Strictly preserve each referenced person's recognizable face, head shape, eyes, eyebrows, nose, lips, jawline, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, and natural body proportions in every frame. Do not beautify, slim, enlarge, masculinize, feminize, or redesign either person. Preserve the original left-right placement throughout the video. Match both people precisely to the original performers' head positions, eye lines, gestures, lip movements, hand movements, posture, rhythm, interaction with the hanging microphone, and full-body motion. Preserve the original camera movement, camera shake, zoom, framing, focus, cuts, timing, lighting, orange studio background, floor, hanging microphone, props, shadows, and audio. Keep every movement and camera action identical to the source video. Replace only the two people. Photorealistic live-action, stable faces, natural skin, no identity drift, no face morphing, no duplicated people, no extra people, and no restyle. Preserve the exact clothing, footwear, jewelry, glasses, and accessories worn by each person in their own reference image.$prompt$,
   '',
-  1,
+  267,
   true,
   'https://tg-miniapp-liart.vercel.app/assets/templates/rap-in-studio-cover.jpg',
   'https://tg-miniapp-liart.vercel.app/assets/templates/rap-in-studio-preview.mp4',

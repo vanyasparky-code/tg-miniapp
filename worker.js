@@ -51,18 +51,18 @@ const VIDEO_MODEL_ALIASES = {
   wan_2_5: "wan_2_5",
 };
 const TOKEN_PACKAGES = {
-  "tokens-100": { id: "tokens-100", tokens: 100, priceRub: 106 },
-  "tokens-300": { id: "tokens-300", tokens: 300, priceRub: 306 },
-  "tokens-500": { id: "tokens-500", tokens: 500, priceRub: 496 },
-  "tokens-700": { id: "tokens-700", tokens: 700, priceRub: 686 },
-  "tokens-1000": { id: "tokens-1000", tokens: 1000, priceRub: 950 },
-  "tokens-2000": { id: "tokens-2000", tokens: 2000, priceRub: 1794 },
-  "tokens-5000": { id: "tokens-5000", tokens: 5000, priceRub: 4220 },
+  "tokens-100": { id: "tokens-100", tokens: 100, priceRub: 250 },
+  "tokens-300": { id: "tokens-300", tokens: 300, priceRub: 750 },
+  "tokens-500": { id: "tokens-500", tokens: 500, priceRub: 1250 },
+  "tokens-700": { id: "tokens-700", tokens: 700, priceRub: 1750 },
+  "tokens-1000": { id: "tokens-1000", tokens: 1000, priceRub: 2500 },
+  "tokens-2000": { id: "tokens-2000", tokens: 2000, priceRub: 5000 },
+  "tokens-5000": { id: "tokens-5000", tokens: 5000, priceRub: 12500 },
 };
 const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
-const HIGGSFIELD_RETAIL_MULTIPLIER = 3;
 const GENJUTSU_RETAIL_MULTIPLIER = 2;
-const TOKEN_VALUE_RUB = 1;
+const TOKEN_VALUE_RUB = 2.5;
+const GENERATION_PROFIT_RUB = 300;
 const GENJUTSU_USD_RUB_RATE = 100;
 const WEB_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const HISTORY_DOWNLOAD_MAX_AGE_SECONDS = 10 * 60;
@@ -273,7 +273,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Замените четырёх героев ролика своими фотографиями.",
     video_prompt: RAP_IN_CAR_DEFAULT_PROMPT,
     photo_prompt: "",
-    price_rub: 1,
+    price_rub: 248,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/rap-in-car-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-car-preview.mp4`,
@@ -299,7 +299,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Запишите студийный рэп-перформанс со своими героями.",
     video_prompt: RAP_IN_STUDIO_DEFAULT_PROMPT,
     photo_prompt: "",
-    price_rub: 1,
+    price_rub: 267,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-preview.mp4`,
@@ -320,7 +320,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте героями драматичной истории о любви и зомби.",
     video_prompt: ZOMBIE_DRAMA_PROMPT,
     photo_prompt: "",
-    price_rub: 1,
+    price_rub: 273,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/zombie-drama-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/zombie-drama-preview.mp4`,
@@ -341,7 +341,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте главным героем звёздной вечеринки.",
     video_prompt: POPSTAR_PROMPT,
     photo_prompt: "",
-    price_rub: 1,
+    price_rub: 311,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
@@ -367,8 +367,7 @@ let genjutsuPresetCache = null;
 
 function calculateGenerationRetailPrice(
   providerCostUsd,
-  usdRubRate,
-  multiplier = HIGGSFIELD_RETAIL_MULTIPLIER
+  usdRubRate
 ) {
   const costUsd = Number(providerCostUsd);
   const rubRate = Number(usdRubRate);
@@ -382,21 +381,16 @@ function calculateGenerationRetailPrice(
   }
 
   const providerCostRub = costUsd * rubRate;
-  const normalizedMultiplier = Number(multiplier);
-
-  if (!Number.isFinite(normalizedMultiplier) || normalizedMultiplier <= 0) {
-    throw new Error(`Invalid retail multiplier: ${multiplier}`);
-  }
-
-  const retailPriceRub = providerCostRub * normalizedMultiplier;
-  const priceTokens = Math.ceil(retailPriceRub / TOKEN_VALUE_RUB);
+  const targetRetailPriceRub = providerCostRub + GENERATION_PROFIT_RUB;
+  const priceTokens = Math.ceil(targetRetailPriceRub / TOKEN_VALUE_RUB);
+  const retailPriceRub = priceTokens * TOKEN_VALUE_RUB;
 
   return {
     providerCostUsd: Number(costUsd.toFixed(6)),
     providerCostRub: Number(providerCostRub.toFixed(2)),
     usdRubRate: Number(rubRate.toFixed(4)),
-    multiplier: normalizedMultiplier,
     retailPriceRub: Number(retailPriceRub.toFixed(2)),
+    profitRub: Number((retailPriceRub - providerCostRub).toFixed(2)),
     priceTokens,
   };
 }
@@ -472,8 +466,7 @@ function calculateSeedancePricing({
   );
   const pricing = calculateGenerationRetailPrice(
     providerCostUsd,
-    SEEDANCE_USD_RUB_RATE,
-    SEEDANCE_RETAIL_MULTIPLIER
+    SEEDANCE_USD_RUB_RATE
   );
 
   return {
@@ -503,8 +496,7 @@ function calculateGenjutsuPricing(durationSeconds, resolution) {
   const providerCostUsd = Number((billedSeconds * rateUsd).toFixed(6));
   const pricing = calculateGenerationRetailPrice(
     providerCostUsd,
-    GENJUTSU_USD_RUB_RATE,
-    GENJUTSU_RETAIL_MULTIPLIER
+    GENJUTSU_USD_RUB_RATE
   );
 
   return { ...pricing, billedSeconds, resolution };
@@ -4465,25 +4457,19 @@ async function getPlatformCatalog() {
     throw new Error(`Template catalog failed: ${error.message}`);
   }
 
-  const genjutsuPriceRubPerSecond = Object.fromEntries(
+  const genjutsuCostRubPerSecond = Object.fromEntries(
     Object.entries(GENJUTSU_RATES_USD).map(([resolution, rate]) => [
       resolution,
-      rate * GENJUTSU_USD_RUB_RATE * GENJUTSU_RETAIL_MULTIPLIER,
+      rate * GENJUTSU_USD_RUB_RATE,
     ])
   );
   const publicTemplates = (templates || []).map((template) => {
     const publicTemplate = sanitizeTemplateForCatalog(template);
 
-    if (template.generation_mode === "genjutsu_motion_template") {
-      publicTemplate.resolution = "480p";
-      publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
-    }
-
-    if (template.slug === "rap_in_studio") {
-      publicTemplate.video_variants = RAP_IN_STUDIO_VIDEO_VARIANTS;
-    }
-
-    if (template.generation_mode === "seedance_2_5_edit_template") {
+    if (
+      template.generation_mode === "genjutsu_motion_template" ||
+      template.generation_mode === "seedance_2_5_edit_template"
+    ) {
       publicTemplate.resolution = "480p";
       publicTemplate.price_rub = getTemplateTokenPrice(template, "480p");
       publicTemplate.price_tokens_by_resolution = Object.fromEntries(
@@ -4496,6 +4482,10 @@ async function getPlatformCatalog() {
       );
     }
 
+    if (template.slug === "rap_in_studio") {
+      publicTemplate.video_variants = RAP_IN_STUDIO_VIDEO_VARIANTS;
+    }
+
     return publicTemplate;
   });
 
@@ -4505,15 +4495,16 @@ async function getPlatformCatalog() {
     pricing: {
       currency: "RUB",
       token_value_rub: TOKEN_VALUE_RUB,
+      profit_rub_per_generation: GENERATION_PROFIT_RUB,
       rounding: "ceil_to_token",
       genjutsu: {
-        price_rub_per_second: genjutsuPriceRubPerSecond,
+        cost_rub_per_second: genjutsuCostRubPerSecond,
         duration_rounding: "ceil_after_trim_to_30_seconds",
       },
       seedance: {
         usd_rub_rate: SEEDANCE_USD_RUB_RATE,
-        retail_multiplier: SEEDANCE_RETAIL_MULTIPLIER,
         token_value_rub: TOKEN_VALUE_RUB,
+        profit_rub_per_generation: GENERATION_PROFIT_RUB,
         fps: SEEDANCE_FPS,
         resolution_short_edge: SEEDANCE_RESOLUTION_SHORT_EDGE,
         rates_usd_per_1000_video_tokens:
@@ -4544,17 +4535,6 @@ function getTemplateTokenPrice(
   templateOptions = {}
 ) {
   if (template?.generation_mode === "seedance_2_5_edit_template") {
-    const basePrice = Math.ceil(Number(template?.price_rub));
-    const baseResolution = String(template?.resolution || "480p");
-
-    if (
-      String(resolution) === baseResolution &&
-      Number.isFinite(basePrice) &&
-      basePrice > 0
-    ) {
-      return basePrice;
-    }
-
     return calculateSeedancePricing({
       version: "2.5",
       inputVideoSeconds: Number(template.duration || POPSTAR_SOURCE_DURATION_SECONDS),
@@ -4566,17 +4546,6 @@ function getTemplateTokenPrice(
     }).priceTokens;
   }
 
-  const basePrice = Math.ceil(Number(template?.price_rub));
-  const baseResolution = String(template?.resolution || "480p");
-
-  if (
-    String(resolution) === baseResolution &&
-    Number.isFinite(basePrice) &&
-    basePrice > 0
-  ) {
-    return basePrice;
-  }
-
   if (template?.generation_mode === "genjutsu_motion_template") {
     return calculateGenjutsuPricing(
       getTemplateDurationSeconds(template, templateOptions),
@@ -4584,7 +4553,7 @@ function getTemplateTokenPrice(
     ).priceTokens;
   }
 
-  const priceTokens = basePrice;
+  const priceTokens = Math.ceil(Number(template?.price_rub));
 
   if (!Number.isFinite(priceTokens) || priceTokens <= 0) {
     throw createHttpError(

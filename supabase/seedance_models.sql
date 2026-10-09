@@ -56,7 +56,7 @@ update public.templates
 set
   generation_mode = 'genjutsu_motion_template',
   video_model = 'genjutsu_motion',
-  price_rub = 1,
+  price_rub = 311,
   duration = 30,
   resolution = '480p',
   available_resolutions = '["480p", "720p", "1080p"]'::jsonb
