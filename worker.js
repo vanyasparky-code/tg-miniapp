@@ -185,6 +185,9 @@ const SEEDANCE_ASPECT_RATIOS = Object.freeze([
 const POPSTAR_SOURCE_DURATION_SECONDS = 30;
 const POPSTAR_OUTPUT_DURATION_SECONDS = POPSTAR_SOURCE_DURATION_SECONDS;
 const MINI_APP_URL = "https://tg-miniapp-liart.vercel.app";
+const TEMPLATE_AUDIO_TRACKS = Object.freeze({
+  popstar: `${MINI_APP_URL}/assets/templates/popstar-audio.mp3`,
+});
 const RAP_IN_CAR_IDENTITY_PROMPT =
   "Strictly preserve the exact identity and natural appearance of every person from the uploaded reference images throughout the entire video. Each reference image represents one separate person: never blend, average, merge, or exchange facial or body features between people, and never mix them with the original actors. Reproduce each person's recognizable face exactly, including face shape, head shape, eyes, eyebrows, nose, lips, jawline, cheeks, ears, skin tone, facial hair, hairline, hairstyle, and hair color. Preserve each person's exact natural body parameters from their own reference: apparent height, weight, body build, shoulder width, chest, waist, neck, arms, legs, and overall proportions. Do not make anyone thinner, heavier, taller, shorter, younger, older, more muscular, or differently proportioned. Keep all identities, faces, and body proportions stable in every frame, including head turns, profile views, open-mouth singing, gestures, and motion blur. No face morphing, identity drift, hybrid faces, duplicated faces, or body-shape drift. Keep the existing character positions, actions, motion, timing, car interior, camera, framing, and lighting unchanged.";
 const RAP_IN_CAR_DEFAULT_PROMPT =
@@ -200,11 +203,11 @@ const RAP_IN_STUDIO_OUTFIT_PROMPT =
 const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
 const POPSTAR_IDENTITY_PROMPT =
-  "Edit the uploaded source video while preserving its complete original sequence. Image 1 replaces only the main performer in light clothing at the front of the scene. Lock the exact recognizable identity from image 1 in every shot: preserve the face shape, head shape, eyes, eyebrows, nose, lips, jawline, ears, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, shoulder width, and natural body proportions. Never blend image 1 with the original actor or with any other person. Map image 1 precisely onto the original performer's head position, eye line, facial expressions, gestures, walking, stair descent, poses, timing, and interaction with all props. The person from image 1 must reproduce the original performer's visible lip-sync frame by frame and phoneme by phoneme: preserve every mouth shape, lip opening and closing, jaw movement, cheek movement, expression transition, and exact timing. Copy the original visible mouth performance even when the source video has no audible track, and keep the lips synchronized with the original performance throughout every close-up and profile view. Preserve the clothing, footwear, jewelry, glasses, and accessories shown in image 1 consistently throughout the video. The static four-panel pop-art portrait beside the stairs must depict the same person from image 1 in all four panels while preserving the original panel layout, colors, size, position, perspective, lighting, and occlusion. At approximately 15 seconds, preserve the original action in which the main performer hands the mobile phone directly into the security guard's hand. Show one continuous, physically natural handoff: keep the phone clearly visible as it leaves the performer's hand and enters the guard's hand, preserving the original hand positions, arm trajectories, timing, and contact. The phone must not disappear, duplicate, drop, remain in the performer's hand, or appear in the guard's hand before contact. Preserve the original camera movement, camera shake, framing, focus, cuts, duration, acting rhythm, villa interior, staircase, windows, lighting, party guests, background movement, props, shadows, and audio. Keep all unassigned people unchanged and moving naturally. Do not add, remove, merge, duplicate, or reposition people. Photorealistic live-action, stable identity, natural skin, no face morphing, no body-shape drift, no flicker, and no restyle.";
+  "Edit the uploaded source video while preserving its complete original sequence. Image 1 replaces only the main performer in light clothing at the front of the scene. Lock the exact recognizable identity from image 1 in every shot: preserve the face shape, head shape, eyes, eyebrows, nose, lips, jawline, ears, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, shoulder width, and natural body proportions. Never blend image 1 with the original actor or with any other person. Map image 1 precisely onto the original performer's head position, eye line, facial expressions, gestures, walking, stair descent, poses, timing, and interaction with all props. The person from image 1 must reproduce the original performer's visible lip-sync frame by frame and phoneme by phoneme: preserve every mouth shape, lip opening and closing, jaw movement, cheek movement, expression transition, and exact timing. Copy the original visible mouth performance even when the source video has no audible track, and keep the lips synchronized with the original performance throughout every close-up and profile view. Preserve the clothing, footwear, jewelry, glasses, and accessories shown in image 1 consistently throughout the video. The static four-panel pop-art portrait beside the stairs must depict the same person from image 1 in all four panels while preserving the original panel layout, colors, size, position, perspective, lighting, and occlusion. At approximately 15 seconds, the person from image 1 must throw the mobile phone backward toward the security guard behind him. Preserve the original throwing gesture, backward arm motion, release point, phone rotation, airborne trajectory, distance, timing, and catch. Show one continuous, physically natural throw: the phone must clearly leave the performer's hand, travel visibly through the air behind him, and be caught by the security guard. The phone must not disappear, duplicate, drop, remain in the performer's hand, teleport, or appear in the guard's hand before the catch. Preserve the original camera movement, camera shake, framing, focus, cuts, duration, acting rhythm, villa interior, staircase, windows, lighting, party guests, background movement, props, shadows, and audio. Keep all unassigned people unchanged and moving naturally. Do not add, remove, merge, duplicate, or reposition people. Photorealistic live-action, stable identity, natural skin, no face morphing, no body-shape drift, no flicker, and no restyle.";
 const POPSTAR_PROMPT =
-  `${POPSTAR_IDENTITY_PROMPT} Image 2 must replace the existing original bald, bearded adult man wearing black who acts as the security guard and follows the performer on and below the stairs. Target this exact existing bald bearded man in every frame where he is visible, including distant, partial, side, and occluded views. Remove his original identity completely and map the person from image 2 onto the exact same body track, position, scale, depth, posture, walking, gestures, timing, and interaction with the performer. This is strictly a replacement of an existing person, never an insertion: do not add the person from image 2 behind the guard, beside the guard, elsewhere on the stairs, or anywhere else in the scene. The original bald bearded man must no longer remain visible after replacement, and the total number of people must remain exactly the same as in the source video. Lock the exact recognizable identity, face, hair, skin tone, age, height, weight, body build, and natural proportions from image 2 in every appearance. Preserve the clothing and accessories shown in image 2 consistently. Keep image 1 and image 2 as two completely separate identities: never swap, blend, merge, or average their facial or body features. Do not apply image 2 to the performer or any party guest. No duplicate guard, no extra person, and no new background character.`;
+  `${POPSTAR_IDENTITY_PROMPT} Image 2 must replace the existing original bald, bearded adult man wearing black who acts as the security guard and follows the performer on and below the stairs. Target this exact existing bald bearded man in every frame where he is visible, including distant, partial, side, and occluded views. Remove his original identity completely and map the person from image 2 onto the exact same body track, position, scale, depth, posture, walking, gestures, timing, and interaction with the performer. At approximately 15 seconds, the person from image 2 must catch the mobile phone thrown backward by the person from image 1, using the original guard's exact catching motion and timing. This is strictly a replacement of an existing person, never an insertion: do not add the person from image 2 behind the guard, beside the guard, elsewhere on the stairs, or anywhere else in the scene. The original bald bearded man must no longer remain visible after replacement, and the total number of people must remain exactly the same as in the source video. Lock the exact recognizable identity, face, hair, skin tone, age, height, weight, body build, and natural proportions from image 2 in every appearance. Preserve the clothing and accessories shown in image 2 consistently. Keep image 1 and image 2 as two completely separate identities: never swap, blend, merge, or average their facial or body features. Do not apply image 2 to the performer or any party guest. No duplicate guard, no extra person, and no new background character.`;
 const POPSTAR_PERFORMER_ONLY_PROMPT =
-  `${POPSTAR_IDENTITY_PROMPT} Keep the original tall security guard dressed in black completely unchanged in every shot, including his face, body, clothing, position, walking, gestures, timing, and interaction with the performer. Do not apply image 1 to the security guard or to any party guest.`;
+  `${POPSTAR_IDENTITY_PROMPT} Keep the original bald, bearded security guard dressed in black completely unchanged in every shot, including his face, body, clothing, position, walking, gestures, timing, and interaction with the performer. At approximately 15 seconds, the original security guard must catch the mobile phone thrown backward by the person from image 1, preserving the original catching motion and timing. Do not apply image 1 to the security guard or to any party guest.`;
 
 function getTemplateRequiredPhotoCount(template, templateOptions = {}) {
   if (template?.slug === "popstar" && templateOptions?.keep_guard === true) {
@@ -898,6 +901,74 @@ async function uploadPreviewVideoToSupabase(previewPath, orderId) {
   }
 
   return supabase.storage.from("media").getPublicUrl(storagePath).data.publicUrl;
+}
+
+async function uploadResultVideoToSupabase(videoPath, orderId) {
+  const videoBuffer = await fs.readFile(videoPath);
+  const storagePath = `results/${orderId}.mp4`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("media")
+    .upload(storagePath, videoBuffer, {
+      contentType: "video/mp4",
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Result video upload failed: ${uploadError.message}`);
+  }
+
+  return supabase.storage.from("media").getPublicUrl(storagePath).data.publicUrl;
+}
+
+async function addTemplateAudioTrack(videoUrl, templateSlug, orderId) {
+  const audioUrl = TEMPLATE_AUDIO_TRACKS[templateSlug];
+
+  if (!audioUrl) {
+    return videoUrl;
+  }
+
+  let videoPath = null;
+  let audioPath = null;
+  const outputPath = path.join(os.tmpdir(), `result-with-audio-${orderId}.mp4`);
+
+  try {
+    videoPath = await downloadFile(videoUrl, `result-${orderId}.mp4`);
+    audioPath = await downloadFile(audioUrl, `audio-${orderId}.mp3`);
+
+    await runCommand(ffmpegPath, [
+      "-y",
+      "-i",
+      videoPath,
+      "-i",
+      audioPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outputPath,
+    ]);
+
+    const resultUrl = await uploadResultVideoToSupabase(outputPath, orderId);
+    console.log("Template audio added:", { orderId, templateSlug, resultUrl });
+    return resultUrl;
+  } finally {
+    await Promise.all(
+      [videoPath, audioPath, outputPath]
+        .filter(Boolean)
+        .map((filePath) => fs.rm(filePath, { force: true }).catch(() => {}))
+    );
+  }
 }
 
 async function createBlurredVideoPreview(videoUrl, orderId) {
@@ -2632,10 +2703,15 @@ async function processGenjutsuTemplateOrder(order, template) {
     }
   }
 
-  const videoUrl = await pollGeneration(
+  const generatedVideoUrl = await pollGeneration(
     requestId,
     statusUrl,
     GENJUTSU_POLL_TIMEOUT_MS
+  );
+  const videoUrl = await addTemplateAudioTrack(
+    generatedVideoUrl,
+    template.slug,
+    order.id
   );
   const completedAt = new Date().toISOString();
   const { error: completeError } = await supabase
