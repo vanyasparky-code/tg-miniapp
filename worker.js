@@ -218,13 +218,13 @@ const RAP_IN_STUDIO_VIDEO_VARIANTS = Object.freeze({
   horizontal: Object.freeze({
     label: "Горизонтальный",
     aspect_ratio: "16:9",
-    duration: 24,
+    duration: 23,
     source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-source.mp4`,
   }),
   vertical: Object.freeze({
     label: "Вертикальный",
     aspect_ratio: "9:16",
-    duration: 30,
+    duration: 23,
     source_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-source-vertical.mp4`,
   }),
 });
@@ -306,7 +306,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     photo_model: "none",
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
-    duration: 24,
+    duration: 23,
     resolution: "480p",
   }),
   Object.freeze({
