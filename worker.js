@@ -51,17 +51,17 @@ const VIDEO_MODEL_ALIASES = {
   wan_2_5: "wan_2_5",
 };
 const TOKEN_PACKAGES = {
-  "tokens-100": { id: "tokens-100", tokens: 100, priceRub: 250 },
-  "tokens-300": { id: "tokens-300", tokens: 300, priceRub: 750 },
-  "tokens-500": { id: "tokens-500", tokens: 500, priceRub: 1250 },
-  "tokens-700": { id: "tokens-700", tokens: 700, priceRub: 1750 },
-  "tokens-1000": { id: "tokens-1000", tokens: 1000, priceRub: 2500 },
-  "tokens-2000": { id: "tokens-2000", tokens: 2000, priceRub: 5000 },
-  "tokens-5000": { id: "tokens-5000", tokens: 5000, priceRub: 12500 },
+  "tokens-100": { id: "tokens-100", tokens: 100, basePriceRub: 250, priceRub: 250, discountPercent: 0 },
+  "tokens-300": { id: "tokens-300", tokens: 300, basePriceRub: 750, priceRub: 735, discountPercent: 2 },
+  "tokens-500": { id: "tokens-500", tokens: 500, basePriceRub: 1250, priceRub: 1200, discountPercent: 4 },
+  "tokens-700": { id: "tokens-700", tokens: 700, basePriceRub: 1750, priceRub: 1645, discountPercent: 6 },
+  "tokens-1000": { id: "tokens-1000", tokens: 1000, basePriceRub: 2500, priceRub: 2300, discountPercent: 8 },
+  "tokens-2000": { id: "tokens-2000", tokens: 2000, basePriceRub: 5000, priceRub: 4500, discountPercent: 10 },
 };
 const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60;
 const GENJUTSU_RETAIL_MULTIPLIER = 2;
 const TOKEN_VALUE_RUB = 2.5;
+const MIN_EFFECTIVE_TOKEN_VALUE_RUB = TOKEN_VALUE_RUB * 0.9;
 const GENERATION_PROFIT_RUB = 300;
 const GENJUTSU_USD_RUB_RATE = 100;
 const WEB_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
@@ -273,7 +273,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Замените четырёх героев ролика своими фотографиями.",
     video_prompt: RAP_IN_CAR_DEFAULT_PROMPT,
     photo_prompt: "",
-    price_rub: 248,
+    price_rub: 275,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/rap-in-car-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-car-preview.mp4`,
@@ -299,7 +299,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Запишите студийный рэп-перформанс со своими героями.",
     video_prompt: RAP_IN_STUDIO_DEFAULT_PROMPT,
     photo_prompt: "",
-    price_rub: 267,
+    price_rub: 296,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/rap-in-studio-preview.mp4`,
@@ -320,7 +320,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте героями драматичной истории о любви и зомби.",
     video_prompt: ZOMBIE_DRAMA_PROMPT,
     photo_prompt: "",
-    price_rub: 273,
+    price_rub: 303,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/zombie-drama-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/zombie-drama-preview.mp4`,
@@ -341,7 +341,7 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     description: "Станьте главным героем звёздной вечеринки.",
     video_prompt: POPSTAR_PROMPT,
     photo_prompt: "",
-    price_rub: 311,
+    price_rub: 346,
     is_active: true,
     cover_url: `${MINI_APP_URL}/assets/templates/popstar-cover.jpg`,
     preview_video_url: `${MINI_APP_URL}/assets/templates/popstar-preview.mp4`,
@@ -382,8 +382,10 @@ function calculateGenerationRetailPrice(
 
   const providerCostRub = costUsd * rubRate;
   const targetRetailPriceRub = providerCostRub + GENERATION_PROFIT_RUB;
-  const priceTokens = Math.ceil(targetRetailPriceRub / TOKEN_VALUE_RUB);
-  const retailPriceRub = priceTokens * TOKEN_VALUE_RUB;
+  const priceTokens = Math.ceil(
+    targetRetailPriceRub / MIN_EFFECTIVE_TOKEN_VALUE_RUB
+  );
+  const retailPriceRub = priceTokens * MIN_EFFECTIVE_TOKEN_VALUE_RUB;
 
   return {
     providerCostUsd: Number(costUsd.toFixed(6)),
@@ -3969,7 +3971,9 @@ function getPublicTokenPackages() {
   return Object.values(TOKEN_PACKAGES).map((tokenPackage) => ({
     id: tokenPackage.id,
     tokens: tokenPackage.tokens,
+    base_price_rub: tokenPackage.basePriceRub,
     price_rub: tokenPackage.priceRub,
+    discount_percent: tokenPackage.discountPercent,
   }));
 }
 
@@ -4495,6 +4499,7 @@ async function getPlatformCatalog() {
     pricing: {
       currency: "RUB",
       token_value_rub: TOKEN_VALUE_RUB,
+      minimum_effective_token_value_rub: MIN_EFFECTIVE_TOKEN_VALUE_RUB,
       profit_rub_per_generation: GENERATION_PROFIT_RUB,
       rounding: "ceil_to_token",
       genjutsu: {

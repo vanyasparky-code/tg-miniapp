@@ -43,7 +43,7 @@ insert into public.templates (
   'Замените героев трендового танца фотографиями двух людей и питомца.',
   'swap the video''s main character to the attached characters and his clother.',
   '',
-  241,
+  268,
   true,
   'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-cover.jpg',
   'https://tg-miniapp-liart.vercel.app/assets/templates/dance-with-dog-preview.mp4',
