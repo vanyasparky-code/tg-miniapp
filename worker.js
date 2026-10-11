@@ -4464,6 +4464,7 @@ function sanitizeTemplateForCatalog(template) {
     "required_photo_count",
     "photo_rules",
     "available_resolutions",
+    "created_at",
   ];
   const publicTemplate = {};
 
@@ -4481,6 +4482,7 @@ async function getPlatformCatalog() {
     .from("templates")
     .select("*")
     .eq("is_active", true)
+    .order("created_at", { ascending: false })
     .order("slug", { ascending: true });
 
   if (error) {
