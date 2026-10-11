@@ -202,6 +202,8 @@ const RAP_IN_STUDIO_OUTFIT_PROMPT =
   `${RAP_IN_STUDIO_IDENTITY_PROMPT} Change only the clothing and accessories into two distinct premium rap-performance outfits. Give the left performer and right performer different coordinated looks inspired by modern hip-hop studio fashion: oversized streetwear layers, varsity or leather jackets, graphic shirts or jerseys, relaxed baggy trousers, clean sneakers or boots, tasteful chains, rings, bracelets, and luxury watches. Keep accessories away from the eyes and do not obscure either face. Fit each outfit over the person's unchanged body without changing height, weight, build, shoulders, waist, limbs, or proportions. Do not change faces, skin, hair, age, pose, movement, or position.`;
 const ZOMBIE_DRAMA_PROMPT =
   "Edit the uploaded source video and replace only the two people. Keep everything else identical to the original: the same shots, cuts, timing, camera movement, lighting, locations, backgrounds, props, gun, wardrobe shapes, tear tracks, wind, sunset, color grade, film grain, framing, and performances. Keep it ultrarealistic live-action. No restyle, no new scenes, and no extra characters. Image 1 replaces the man in every shot. Lock the exact recognizable identity, face, hair, skin tone, age, height, body build, weight, and proportions from image 1. Use the same man in the dark house and in all golden-field memories. Map him precisely onto the original man's head position, eye line, crying, aiming, lowering the gun, opening his arms, smiling, running, and kissing. Never redesign, blend, or distort his face or body. Image 2 replaces the woman in every shot and must remain the same exact recognizable woman throughout. In the dark-house scenes only, render the woman from image 2 in the original infected state while preserving her exact facial structure and identity: keep the milky eyes, dirty cracked skin, snarl, torn clothes, and feral twitch from the original performance. In the memory scenes only, render the same woman from image 2 healthy, with her exact natural face, hair, skin tone, age, height, body build, weight, and proportions, while lying in the grass, laughing in close-up, running through the field, and sitting at sunset. Do not blend image 1 and image 2. Do not mix either identity with the original actors. Do not put the healthy face on the infected body or the infected appearance on the healthy memory woman. Maintain stable facial identity and body proportions in every frame, including profiles, motion, crying, smiling, running, and kissing. Do not change the windows, kitchen shelves, grass, sky, camera path, or scene composition. Preserve photorealistic skin contact, wet tears, and natural head tracking to the original motion.";
+const TEKTONIK_PROMPT =
+  "Edit the uploaded source video and replace exactly the two lead dancers on stage. Image 1 must replace only the dancer on the left, and image 2 must replace only the dancer on the right. Keep image 1 and image 2 as two completely separate, stable identities; never swap, blend, merge, average, duplicate, or transfer facial or body features between them. Strictly preserve each referenced person's exact recognizable face, head shape, eyes, eyebrows, nose, lips, jawline, ears, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, shoulder width, waist, limbs, and natural body proportions in every frame. Do not beautify, slim, enlarge, masculinize, feminize, age, de-age, or redesign either person. Preserve the exact clothing, footwear, jewelry, headwear, and accessories shown in each person's own reference image. Keep the original left-right placement for the entire video. Map both referenced people precisely onto the original dancers' head positions, eye lines, facial expressions, arm choreography, hand gestures, shoulder movement, footwork, posture, rhythm, timing, and synchronized Tektonik dance performance. Preserve every original motion, including fast arm crossings, raised hands, body turns, and motion blur, without freezing or simplifying the choreography. Keep the original vertical camera framing, camera movement, handheld shake, zoom, focus, timing, stage lighting, dark concert background, audience silhouettes, raised phones, screens, shadows, atmosphere, and audio exactly unchanged. Replace only the two dancers. Do not alter, remove, add, duplicate, or reposition anyone in the audience. Photorealistic live-action, stable faces, natural skin, stable bodies, accurate hands, no identity drift, no face morphing, no body-shape drift, no extra limbs, no flicker, no new scene, and no restyle.";
 const POPSTAR_IDENTITY_PROMPT =
   "Edit the uploaded source video while preserving its complete original sequence. Image 1 replaces only the main performer in light clothing at the front of the scene. Lock the exact recognizable identity from image 1 in every shot: preserve the face shape, head shape, eyes, eyebrows, nose, lips, jawline, ears, skin tone, facial hair, hairline, hairstyle, age, height, weight, body build, shoulder width, and natural body proportions. Never blend image 1 with the original actor or with any other person. Map image 1 precisely onto the original performer's head position, eye line, facial expressions, gestures, walking, stair descent, poses, timing, and interaction with all props. The person from image 1 must reproduce the original performer's visible lip-sync frame by frame and phoneme by phoneme: preserve every mouth shape, lip opening and closing, jaw movement, cheek movement, expression transition, and exact timing. Copy the original visible mouth performance even when the source video has no audible track, and keep the lips synchronized with the original performance throughout every close-up and profile view. Preserve the clothing, footwear, jewelry, glasses, and accessories shown in image 1 consistently throughout the video. The static four-panel pop-art portrait beside the stairs must depict the same person from image 1 in all four panels while preserving the original panel layout, colors, size, position, perspective, lighting, and occlusion. At approximately 15 seconds, the person from image 1 must throw the mobile phone backward toward the security guard behind him. Preserve the original throwing gesture, backward arm motion, release point, phone rotation, airborne trajectory, distance, timing, and catch. Show one continuous, physically natural throw: the phone must clearly leave the performer's hand, travel visibly through the air behind him, and be caught by the security guard. The phone must not disappear, duplicate, drop, remain in the performer's hand, teleport, or appear in the guard's hand before the catch. Preserve the original camera movement, camera shake, framing, focus, cuts, duration, acting rhythm, villa interior, staircase, windows, lighting, party guests, background movement, props, shadows, and audio. Keep all unassigned people unchanged and moving naturally. Do not add, remove, merge, duplicate, or reposition people. Photorealistic live-action, stable identity, natural skin, no face morphing, no body-shape drift, no flicker, and no restyle.";
 const POPSTAR_PROMPT =
@@ -218,6 +220,9 @@ function getTemplateRequiredPhotoCount(template, templateOptions = {}) {
 }
 const TEMPLATE_GENERATION_VIDEO_OVERRIDES = Object.freeze({
   rap_in_car: `${MINI_APP_URL}/assets/templates/rap-in-car-generation.mp4`,
+});
+const TEMPLATE_TOKEN_PRICE_OVERRIDES = Object.freeze({
+  tektonik: Object.freeze({ "480p": 1 }),
 });
 const RAP_IN_STUDIO_VIDEO_VARIANTS = Object.freeze({
   horizontal: Object.freeze({
@@ -354,6 +359,27 @@ const BUILT_IN_TEMPLATE_ROWS = Object.freeze([
     video_model: "genjutsu_motion",
     aspect_ratio: "16:9",
     duration: POPSTAR_SOURCE_DURATION_SECONDS,
+    resolution: "480p",
+  }),
+  Object.freeze({
+    slug: "tektonik",
+    title: "Тектоник",
+    description: "Повторите энергичный танец вдвоём на большой сцене.",
+    video_prompt: TEKTONIK_PROMPT,
+    photo_prompt: "",
+    price_rub: 1,
+    is_active: true,
+    cover_url: `${MINI_APP_URL}/assets/templates/tektonik-cover.jpg`,
+    preview_video_url: `${MINI_APP_URL}/assets/templates/tektonik-preview.mp4`,
+    source_video_url: `${MINI_APP_URL}/assets/templates/tektonik-source.mp4`,
+    generation_mode: "genjutsu_motion_template",
+    required_photo_count: 2,
+    photo_rules: ["Человек слева", "Человек справа"],
+    available_resolutions: ["480p", "720p", "1080p"],
+    photo_model: "none",
+    video_model: "genjutsu_motion",
+    aspect_ratio: "9:16",
+    duration: 14,
     resolution: "480p",
   }),
 ]);
@@ -4539,6 +4565,14 @@ function getTemplateTokenPrice(
   resolution = "480p",
   templateOptions = {}
 ) {
+  const overriddenPrice = Number(
+    TEMPLATE_TOKEN_PRICE_OVERRIDES[template?.slug]?.[resolution]
+  );
+
+  if (Number.isFinite(overriddenPrice) && overriddenPrice > 0) {
+    return Math.ceil(overriddenPrice);
+  }
+
   if (template?.generation_mode === "seedance_2_5_edit_template") {
     return calculateSeedancePricing({
       version: "2.5",
